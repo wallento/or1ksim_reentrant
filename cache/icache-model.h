@@ -2,6 +2,7 @@
 
    Copyright (C) 1999 Damjan Lampret, lampret@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
   
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
   
@@ -32,7 +33,7 @@
 
 /* Package includes */
 #include "sim-config.h"
-
+#include "siminstance.h"
 
 struct ic
 {
@@ -56,13 +57,10 @@ struct ic
   unsigned int  ustates_reload;	    /* ustates - 1 */
 };
 
-/* External variables */
-extern struct ic *ic_state;
-
 /* Prototypes for external use */
-extern uint32_t  ic_simulate_fetch (oraddr_t fetchaddr,
+extern uint32_t  ic_simulate_fetch (or1ksim *sim, oraddr_t fetchaddr,
 				    oraddr_t virt_addr);
-extern void      ic_inv (oraddr_t dataaddr);
-extern void      reg_ic_sec ();
+extern void      ic_inv (or1ksim *sim, oraddr_t dataaddr);
+extern void      reg_ic_sec (or1ksim* sim);
 
 #endif	/* ICACHE_MODEL__H */

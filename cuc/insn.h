@@ -2,6 +2,7 @@
 
    Copyright (C) 2002 Marko Mlinar, markom@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -81,7 +82,7 @@ typedef struct
 extern const cuc_known_insn known[II_LAST + 1];
 
 /* Timing table -- same indexes as known table */
-typedef struct
+typedef struct _cuc_timing_table
 {
   double delay;
   double size;
@@ -97,13 +98,13 @@ typedef struct
 } cuc_conv;
 
 /* normal (not immediate) size of a function */
-double ii_size (int index, int imm);
+double ii_size (or1ksim *sim, int index, int imm);
 
 /* Returns instruction size */
-double insn_time (cuc_insn * ii);
+double insn_time (or1ksim *sim, cuc_insn * ii);
 
 /* Returns instruction time */
-double insn_size (cuc_insn * ii);
+double insn_size (or1ksim *sim, cuc_insn * ii);
 
 /* Find known instruction and attach them to insn */
 void change_insn_type (cuc_insn * i, int index);
@@ -112,9 +113,9 @@ void change_insn_type (cuc_insn * i, int index);
 const char *cuc_insn_name (cuc_insn * ii);
 
 /* Loads in the specified timings table */
-void load_timing_table (char *filename);
+void load_timing_table (or1ksim *sim, char *filename);
 
 /* Displays shared instructions */
-void print_shared (cuc_func * rf, cuc_shared_item * shared, int nshared);
+void print_shared (or1ksim *sim, cuc_func * rf, cuc_shared_item * shared, int nshared);
 
 #endif	/* INSN__H */

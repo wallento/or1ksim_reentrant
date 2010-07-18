@@ -2,6 +2,7 @@
 
    Copyright (C) 2001 Marko Mlinar, markom@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -30,6 +31,8 @@
 /* Package include */
 #include "abstract.h"
 
+#include "siminstance.h"
+
 /*! Structure for holding one label per particular memory location */
 struct label_entry
 {
@@ -45,20 +48,17 @@ struct breakpoint_entry
   struct breakpoint_entry *next;
 };
 
-/* Globally visible variables */
-extern struct breakpoint_entry *breakpoints;
-
 /* Function prototypes for external use */
-extern void                init_labels ();
-extern void                add_label (oraddr_t  addr,
+extern void                init_labels (or1ksim *sim);
+extern void                add_label (or1ksim* sim, oraddr_t  addr,
 				      char     *name);
-extern struct label_entry *get_label (oraddr_t addr);
-extern struct label_entry *find_label (char *name);
-extern oraddr_t            eval_label (char *name);
-extern void                add_breakpoint (oraddr_t addr);
-extern void                remove_breakpoint (oraddr_t addr);
-extern void                print_breakpoints ();
-extern int                 has_breakpoint (oraddr_t addr);
-extern void                init_breakpoints ();
+extern struct label_entry *get_label (or1ksim* sim, oraddr_t addr);
+extern struct label_entry *find_label (or1ksim* sim, char *name);
+extern oraddr_t            eval_label (or1ksim* sim, char *name);
+extern void                add_breakpoint (or1ksim* sim, oraddr_t addr);
+extern void                remove_breakpoint (or1ksim* sim, oraddr_t addr);
+extern void                print_breakpoints (or1ksim* sim);
+extern int                 has_breakpoint (or1ksim* sim, oraddr_t addr);
+extern void                init_breakpoints (or1ksim* sim);
 
 #endif	/* LABELS__H_ */

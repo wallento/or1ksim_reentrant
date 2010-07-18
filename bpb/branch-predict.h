@@ -2,6 +2,7 @@
 
    Copyright (C) 1999 Damjan Lampret, lampret@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -33,10 +34,10 @@
 #include "arch.h"
 
 /* Prototypes for external use */
-extern void  bpb_info ();
-extern void  bpb_update (oraddr_t addr, int taken);
-extern void  btic_info ();
-extern void  btic_update (oraddr_t targetaddr);
-extern void  reg_bpb_sec ();
+extern void  bpb_info (or1ksim *sim);
+extern void  bpb_update (or1ksim* sim, oraddr_t addr, int taken);
+extern void  btic_info (or1ksim *sim);
+extern void  btic_update (or1ksim* sim, oraddr_t targetaddr);
+extern void  reg_bpb_sec (or1ksim* sim);
 
 #endif	/* BRANCH_PREDICT__H */

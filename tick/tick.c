@@ -1,8 +1,9 @@
 /* tick.c -- Simulation of OpenRISC 1000 tick timer
 
    Copyright (C) 1999 Damjan Lampret, lampret@opencores.org
-   Copyright (C) 2005 György `nog' Jeney, nog@sdf.lonestar.org
+   Copyright (C) 2005 GyÃ¶rgy `nog' Jeney, nog@sdf.lonestar.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -47,69 +48,61 @@
 #include "sim-config.h"
 #include "sched.h"
 
-
-/*! When did the timer start to count */
-static long long cycles_start = 0;
-
-/*! Indicates if the timer is actually counting.  Needed to simulate one-shot
-    mode correctly */
-int tick_count;
-
 /*! Reset. It initializes TTCR register. */
 void
-tick_reset (void)
+tick_reset (or1ksim *sim)
 {
-  if (config.sim.verbose)
+  if (sim->config.sim.verbose)
     {
       PRINTF ("Resetting Tick Timer.\n");
     }
 
-  cpu_state.sprs[SPR_TTCR] = 0;
-  cpu_state.sprs[SPR_TTMR] = 0;
-  tick_count = 0;
+  sim->cpu_state.sprs[SPR_TTCR] = 0;
+  sim->cpu_state.sprs[SPR_TTMR] = 0;
+  sim->tick_count = 0;
 }
 
 /*! Raises a timer exception */
 static void
-tick_raise_except (void *dat)
+tick_raise_except (or1ksim *sim,void *dat)
 {
-  cpu_state.sprs[SPR_TTMR] |= SPR_TTMR_IP;
+  sim->cpu_state.sprs[SPR_TTMR] |= SPR_TTMR_IP;
 
   /* Reschedule unconditionally, since we have to raise the exception until
    * TTMR_IP has been cleared */
-  sched_next_insn (tick_raise_except, NULL);
+  sched_next_insn (sim, tick_raise_except, NULL);
 
   /* be sure not to issue a timer exception if an exception occured before it */
-  if (cpu_state.sprs[SPR_SR] & SPR_SR_TEE)
+  if (sim->cpu_state.sprs[SPR_SR] & SPR_SR_TEE)
     {
-      except_handle (EXCEPT_TICK, cpu_state.sprs[SPR_EEAR_BASE]);
+      except_handle (sim,EXCEPT_TICK, sim->cpu_state.sprs[SPR_EEAR_BASE]);
     }
 }
 
 /*! Restarts the tick timer */
 static void
-tick_restart (void *dat)
+tick_restart (or1ksim *sim,void *dat)
 {
-  cpu_state.sprs[SPR_TTCR] = 0;
-  cycles_start = runtime.sim.cycles;
-  SCHED_ADD (tick_restart, NULL, cpu_state.sprs[SPR_TTMR] & SPR_TTMR_PERIOD);
+  sim->cpu_state.sprs[SPR_TTCR] = 0;
+  sim->cycles_start = sim->runtime.sim.cycles;
+  SCHED_ADD (tick_restart, NULL, sim->cpu_state.sprs[SPR_TTMR] & SPR_TTMR_PERIOD);
 }
 
 /*! Stops the timer */
 static void
-tick_one_shot (void *dat)
+tick_one_shot (or1ksim *sim,void *dat)
 {
-  cpu_state.sprs[SPR_TTCR] = cpu_state.sprs[SPR_TTMR] & SPR_TTMR_PERIOD;
-  tick_count = 0;
+  sim->cpu_state.sprs[SPR_TTCR] = sim->cpu_state.sprs[SPR_TTMR] & SPR_TTMR_PERIOD;
+  sim->tick_count = 0;
 }
 
 /*! Schedules the timer jobs */
 static void
-sched_timer_job (uorreg_t prev_ttmr)
+sched_timer_job (or1ksim *sim, uorreg_t prev_ttmr)
 {
-  uorreg_t ttmr = cpu_state.sprs[SPR_TTMR];
+  uorreg_t ttmr = sim->cpu_state.sprs[SPR_TTMR];
   uint32_t match_time = ttmr & SPR_TTMR_PERIOD;
-  uint32_t ttcr_period = spr_read_ttcr () & SPR_TTCR_PERIOD;
+  uint32_t ttcr_period = spr_read_ttcr (sim) & SPR_TTCR_PERIOD;
 
   /* Remove previous jobs if they exists */
   if ((prev_ttmr & SPR_TTMR_IE) && !(ttmr & SPR_TTMR_IP))
@@ -151,7 +144,7 @@ sched_timer_job (uorreg_t prev_ttmr)
       break;
 
     case SPR_TTMR_SR:		/* One-shot timer */
-      if (tick_count)
+      if (sim->tick_count)
 	{
 	  SCHED_ADD (tick_one_shot, NULL, match_time);
 	  if ((ttmr & SPR_TTMR_IE) && !(ttmr & SPR_TTMR_IP))
@@ -168,56 +161,56 @@ sched_timer_job (uorreg_t prev_ttmr)
 
 /*! Handles a write to the ttcr spr */
 void
-spr_write_ttcr (uorreg_t value)
+spr_write_ttcr (or1ksim *sim, uorreg_t value)
 {
-  cycles_start = runtime.sim.cycles - value;
+  sim->cycles_start = sim->runtime.sim.cycles - value;
 
-  sched_timer_job (cpu_state.sprs[SPR_TTMR]);
+  sched_timer_job (sim, sim->cpu_state.sprs[SPR_TTMR]);
 }
 
 /*! Value is the *previous* value of SPR_TTMR.  The new one can be found in
-    cpu_state.sprs[SPR_TTMR] */
+    sim->cpu_state.sprs[SPR_TTMR] */
 void
-spr_write_ttmr (uorreg_t prev_val)
+spr_write_ttmr (or1ksim *sim, uorreg_t prev_val)
 {
-  uorreg_t value = cpu_state.sprs[SPR_TTMR];
+  uorreg_t value = sim->cpu_state.sprs[SPR_TTMR];
 
   /* Code running on or1k can't set SPR_TTMR_IP so make sure it isn't */
-  cpu_state.sprs[SPR_TTMR] &= ~SPR_TTMR_IP;
+  sim->cpu_state.sprs[SPR_TTMR] &= ~SPR_TTMR_IP;
 
   /* If the timer was already disabled, ttcr should not be updated */
-  if (tick_count)
+  if (sim->tick_count)
     {
-      cpu_state.sprs[SPR_TTCR] = runtime.sim.cycles - cycles_start;
+      sim->cpu_state.sprs[SPR_TTCR] = sim->runtime.sim.cycles - sim->cycles_start;
     }
 
-  cycles_start = runtime.sim.cycles - cpu_state.sprs[SPR_TTCR];
+  sim->cycles_start = sim->runtime.sim.cycles - sim->cpu_state.sprs[SPR_TTCR];
 
-  tick_count = value & SPR_TTMR_M;
+  sim->tick_count = value & SPR_TTMR_M;
 
-  if ((tick_count == 0xc0000000) &&
-      (cpu_state.sprs[SPR_TTCR] == (value & SPR_TTMR_PERIOD)))
+  if ((sim->tick_count == 0xc0000000) &&
+      (sim->cpu_state.sprs[SPR_TTCR] == (value & SPR_TTMR_PERIOD)))
     {
-      tick_count = 0;
+      sim->tick_count = 0;
     }
 
-  sched_timer_job (prev_val);
+  sched_timer_job (sim, prev_val);
 }
 
 uorreg_t
-spr_read_ttcr ()
+spr_read_ttcr (or1ksim *sim)
 {
   uorreg_t ret;
 
-  if (!tick_count)
+  if (!sim->tick_count)
     {
       /* Report the time when the counter stoped (and don't carry on
 	 counting) */
-      ret = cpu_state.sprs[SPR_TTCR];
+      ret = sim->cpu_state.sprs[SPR_TTCR];
     }
   else
     {
-      ret = runtime.sim.cycles - cycles_start;
+      ret = sim->runtime.sim.cycles - sim->cycles_start;
     }
 
   return  ret;

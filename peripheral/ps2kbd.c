@@ -2,6 +2,7 @@
 
    Copyright (C) 2002 Marko Mlinar, markom@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -438,7 +439,7 @@ scan_decode (struct kbd_state *kbd, unsigned char c)
 
 /* Write a register */
 static void
-kbd_write8 (oraddr_t addr, uint8_t value, void *dat)
+kbd_write8 (or1ksim *sim,oraddr_t addr, uint8_t value, void *dat)
 {
   struct kbd_state *kbd = dat;
   switch (addr)
@@ -453,12 +454,12 @@ kbd_write8 (oraddr_t addr, uint8_t value, void *dat)
 	kbd->kresp = 0x1;
       if (kbd->ccmd == KBD_CCMD_DKI)
 	{
-	  clear_interrupt (kbd->irq);
+	  clear_interrupt (sim,kbd->irq);
 	  kbd->ccmdbyte |= KBD_CCMDBYTE_EN;
 	}
       if (kbd->ccmd == KBD_CCMD_EKI)
 	kbd->ccmdbyte &= ~KBD_CCMDBYTE_EN;
-      if (config.sim.verbose)
+      if (sim->config.sim.verbose)
 	PRINTF ("kbd_write8(%" PRIxADDR ") %02x\n", addr, value);
       break;
     case KBD_DATA:
@@ -475,7 +476,7 @@ kbd_write8 (oraddr_t addr, uint8_t value, void *dat)
 	kbd->ccmdbyte &= ~KBD_CCMDBYTE_EN;
       kbd->kresp = 0x1;
       kbd->ccmd = 0x00;
-      if (config.sim.verbose)
+      if (sim->config.sim.verbose)
 	PRINTF ("kbd_write8(%" PRIxADDR ") %02x\n", addr, value);
       break;
     default:
@@ -487,7 +488,7 @@ kbd_write8 (oraddr_t addr, uint8_t value, void *dat)
 
 /* Read a register */
 static uint8_t
-kbd_read8 (oraddr_t addr, void *dat)
+kbd_read8 (or1ksim *sim,oraddr_t addr, void *dat)
 {
   struct kbd_state *kbd = dat;
   switch (addr)
@@ -499,12 +500,12 @@ kbd_read8 (oraddr_t addr, void *dat)
 	  c |= KBD_STATUS_OBF;
 	c |= kbd->ccmdbyte & KBD_CCMDBYTE_SYS;
 	c |= KBD_STATUS_INH;
-	if (config.sim.verbose)
+	if (sim->config.sim.verbose)
 	  PRINTF ("kbd_read8(%" PRIxADDR ") %lx\n", addr, c);
 	return c;
       }
     case KBD_DATA:
-      clear_interrupt (kbd->irq);
+      clear_interrupt (sim,kbd->irq);
       if (kbd->ccmd)
 	{
 	  unsigned long rc = 0;
@@ -516,7 +517,7 @@ kbd_read8 (oraddr_t addr, void *dat)
 	    rc = 0x00;
 	  kbd->ccmd = 0x00;
 	  kbd->kresp = 0x0;
-	  if (config.sim.verbose)
+	  if (sim->config.sim.verbose)
 	    PRINTF ("kbd_read8(%" PRIxADDR ") %lx\n", addr, rc);
 	  return rc;
 	}
@@ -544,7 +545,7 @@ kbd_read8 (oraddr_t addr, void *dat)
 	      rc = KBD_KRESP_ACK;
 	    }
 	  kbd->kcmd = 0x00;
-	  if (config.sim.verbose)
+	  if (sim->config.sim.verbose)
 	    PRINTF ("kbd_read8(%" PRIxADDR ") %lx\n", addr, rc);
 	  return rc;
 	}
@@ -554,12 +555,12 @@ kbd_read8 (oraddr_t addr, void *dat)
 	  kbd->buf_tail = (kbd->buf_tail + 1) % KBD_MAX_BUF;
 	  kbd->buf_count--;
 	  kbd->kresp = 0x0;
-	  if (config.sim.verbose)
+	  if (sim->config.sim.verbose)
 	    PRINTF ("kbd_read8(%" PRIxADDR ") %lx\n", addr, c);
 	  return c;
 	}
       kbd->kresp = 0x0;
-      if (config.sim.verbose)
+      if (sim->config.sim.verbose)
 	PRINTF ("kbd_read8(%" PRIxADDR ") fifo empty\n", addr);
       return 0;
     default:
@@ -572,7 +573,7 @@ kbd_read8 (oraddr_t addr, void *dat)
 
 /* Simulation hook. Must be called every couple of clock cycles to simulate incomming data. */
 static void
-kbd_job (void *dat)
+kbd_job (or1ksim *sim,void *dat)
 {
   struct kbd_state *kbd = dat;
   int c;
@@ -591,17 +592,17 @@ kbd_job (void *dat)
            kbd->kresp, kbd->buf_count);
 */
   if (kbd_int)
-    report_interrupt (kbd->irq);
+    report_interrupt (sim,kbd->irq);
   SCHED_ADD (kbd_job, dat, kbd->slowdown);
 }
 
 /* Reset all (simulated) ps2 controlers/keyboards */
 static void
-kbd_reset (void *dat)
+kbd_reset (or1ksim *sim,void *dat)
 {
   struct kbd_state *kbd = dat;
   long int system_kfreq =
-    (long) ((1000000000.0 / (double) config.sim.clkcycle_ps));
+    (long) ((1000000000.0 / (double) sim->config.sim.clkcycle_ps));
 
   system_kfreq = (system_kfreq < 1) ? 1 : system_kfreq;
 
@@ -625,7 +626,7 @@ kbd_reset (void *dat)
 
 
 static void
-kbd_info (void *dat)
+kbd_info (or1ksim *sim, void *dat)
 {
   struct kbd_state *kbd = dat;
   PRINTF ("kbd_kcmd: %x\n", kbd->kcmd);
@@ -639,7 +640,7 @@ kbd_info (void *dat)
 
 
 static void
-kbd_enabled (union param_val val, void *dat)
+kbd_enabled (or1ksim *sim,union param_val val, void *dat)
 {
   struct kbd_state *kbd = dat;
   kbd->enabled = val.int_val;
@@ -647,7 +648,7 @@ kbd_enabled (union param_val val, void *dat)
 
 
 static void
-kbd_baseaddr (union param_val val, void *dat)
+kbd_baseaddr (or1ksim *sim,union param_val val, void *dat)
 {
   struct kbd_state *kbd = dat;
   kbd->baseaddr = val.addr_val;
@@ -655,7 +656,7 @@ kbd_baseaddr (union param_val val, void *dat)
 
 
 static void
-kbd_irq (union param_val val, void *dat)
+kbd_irq (or1ksim *sim,union param_val val, void *dat)
 {
   struct kbd_state *kbd = dat;
   kbd->irq = val.int_val;
@@ -671,7 +672,7 @@ kbd_irq (union param_val val, void *dat)
    @param[in] dat  The config data structure                                 */
 /*---------------------------------------------------------------------------*/
 static void
-kbd_rxfile (union param_val val, void *dat)
+kbd_rxfile (or1ksim *sim,union param_val val, void *dat)
 {
   struct kbd_state *kbd = dat;
 
@@ -721,7 +722,7 @@ kbd_sec_start ()
 
 
 static void
-kbd_sec_end (void *dat)
+kbd_sec_end (or1ksim *sim,void *dat)
 {
   struct kbd_state *kbd = dat;
   struct mem_ops ops;
@@ -744,16 +745,16 @@ kbd_sec_end (void *dat)
   ops.delayr = 2;
   ops.delayw = 2;
 
-  reg_mem_area (kbd->baseaddr, KBD_SPACE, 0, &ops);
-  reg_sim_reset (kbd_reset, dat);
-  reg_sim_stat (kbd_info, dat);
+  reg_mem_area (sim, kbd->baseaddr, KBD_SPACE, 0, &ops);
+  reg_sim_reset (sim, kbd_reset, dat);
+  reg_sim_stat (sim, kbd_info, dat);
 }
 
 void
-reg_kbd_sec ()
+reg_kbd_sec (or1ksim *sim)
 {
   struct config_section *sec =
-    reg_config_sec ("kbd", kbd_sec_start, kbd_sec_end);
+    reg_config_sec (sim, "kbd", kbd_sec_start, kbd_sec_end);
 
   reg_config_param (sec, "baseaddr", paramt_addr, kbd_baseaddr);
   reg_config_param (sec, "enabled", paramt_int, kbd_enabled);

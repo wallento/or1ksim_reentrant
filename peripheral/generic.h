@@ -1,6 +1,7 @@
 /* generic.h -- Generic external peripheral
 
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
   
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
   
@@ -27,6 +28,6 @@
 #define GENERIC__H
 
 /* Prototype for external use */
-extern void  reg_generic_sec ();
+extern void  reg_generic_sec (or1ksim* sim);
 
 #endif	/* GENERIC__H */

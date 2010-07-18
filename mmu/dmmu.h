@@ -2,6 +2,7 @@
 
    Copyright (C) 1999 Damjan Lampret, lampret@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -29,6 +30,7 @@
 
 /* Package includes */
 #include "sim-config.h"
+#include "siminstance.h"
 
 struct dmmu
 {
@@ -48,19 +50,16 @@ struct dmmu
   int       hitdelay;		/* How much cycles does the hit cost */
 };
 
-#define DADDR_PAGE(addr) ((addr) & dmmu_state->page_mask)
-
-/* FIXME: Remove the need for this global */
-extern struct dmmu *dmmu_state;
+#define DADDR_PAGE(addr) ((addr) & sim->dmmu_state->page_mask)
 
 /* Prototypes for external use */
-extern oraddr_t  dmmu_translate (oraddr_t  virtaddr,
+extern oraddr_t  dmmu_translate (or1ksim *sim, oraddr_t  virtaddr,
 				 int       write_access);
 extern oraddr_t  dmmu_simulate_tlb (oraddr_t  virtaddr,
 				    int       write_access);
-extern oraddr_t  peek_into_dtlb (oraddr_t  virtaddr,
+extern oraddr_t  peek_into_dtlb (or1ksim *sim, oraddr_t  virtaddr,
 				 int       write_access,
 				 int       through_dc);
-extern void      reg_dmmu_sec ();
+extern void      reg_dmmu_sec (or1ksim* sim);
 
 #endif  /* DMMU__H */

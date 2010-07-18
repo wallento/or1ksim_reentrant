@@ -1,8 +1,9 @@
 /* abstract.c -- Abstract entities
 
    Copyright (C) 1999 Damjan Lampret, lampret@opencores.org
-   Copyright (C) 2005 György `nog' Jeney, nog@sdf.lonestar.org
+   Copyright (C) 2005 Gyï¿½rgy `nog' Jeney, nog@sdf.lonestar.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
   
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
   
@@ -46,43 +47,25 @@
 #include "opcode/or32.h"
 #include "dmmu.h"
 #include "immu.h"
+#include "siminstance.h"
 
 #if DYNAMIC_EXECUTION
 #include "dyn-rec.h"
 #endif
 
-
-/*! Global temporary variable to increase speed.  */
-struct dev_memarea *cur_area;
-
-/* Glboal variables set by MMU if cache inhibit bit is set for current
-   access.  */
-int  data_ci;			/*!< Global var: data cache inhibit bit set */
-int  insn_ci;			/*!< Global var: instr cache inhibit bit set */
-
-/* Pointer to memory area descriptions that are assigned to individual
-   peripheral devices. */
-static struct dev_memarea *dev_list;
-
-/* Pointer to memory controller device descriptor.  */
-static struct dev_memarea *mc_area = NULL;
-
-/* Virtual address of current access. */
-static oraddr_t cur_vadd;
-
 /* Forward declarations */
-static uint32_t eval_mem_32_inv (oraddr_t, void *);
-static uint16_t eval_mem_16_inv (oraddr_t, void *);
-static uint8_t  eval_mem_8_inv (oraddr_t, void *);
-static uint32_t eval_mem_32_inv_direct (oraddr_t, void *);
-static uint16_t eval_mem_16_inv_direct (oraddr_t, void *);
-static uint8_t  eval_mem_8_inv_direct (oraddr_t, void *);
-static void     set_mem_32_inv (oraddr_t, uint32_t, void *);
-static void     set_mem_16_inv (oraddr_t, uint16_t, void *);
-static void     set_mem_8_inv (oraddr_t, uint8_t, void *);
-static void     set_mem_32_inv_direct (oraddr_t, uint32_t, void *);
-static void     set_mem_16_inv_direct (oraddr_t, uint16_t, void *);
-static void     set_mem_8_inv_direct (oraddr_t, uint8_t, void *);
+static uint32_t eval_mem_32_inv (or1ksim *sim,oraddr_t, void *);
+static uint16_t eval_mem_16_inv (or1ksim *sim,oraddr_t, void *);
+static uint8_t  eval_mem_8_inv (or1ksim *sim,oraddr_t, void *);
+static uint32_t eval_mem_32_inv_direct (or1ksim *sim, oraddr_t, void *);
+static uint16_t eval_mem_16_inv_direct (or1ksim *sim, oraddr_t, void *);
+static uint8_t  eval_mem_8_inv_direct (or1ksim *sim, oraddr_t, void *);
+static void     set_mem_32_inv (or1ksim *sim,oraddr_t, uint32_t, void *);
+static void     set_mem_16_inv (or1ksim *sim,oraddr_t, uint16_t, void *);
+static void     set_mem_8_inv (or1ksim *sim,oraddr_t, uint8_t, void *);
+static void     set_mem_32_inv_direct (or1ksim *sim, oraddr_t, uint32_t, void *);
+static void     set_mem_16_inv_direct (or1ksim *sim, oraddr_t, uint16_t, void *);
+static void     set_mem_8_inv_direct (or1ksim *sim, oraddr_t, uint8_t, void *);
 
 /* Calculates bit mask to fit the data */
 static unsigned int
@@ -99,7 +82,7 @@ bit_mask (uint32_t data)
    addr is inside the area, if addr & addr_mask == addr_compare
    (used also by peripheral devices like 16450 UART etc.) */
 static struct dev_memarea *
-register_memoryarea_mask (oraddr_t addr_mask,
+register_memoryarea_mask (or1ksim* sim, oraddr_t addr_mask,
 			  oraddr_t addr_compare,
 			  uint32_t size, unsigned mc_dev)
 {
@@ -109,7 +92,7 @@ register_memoryarea_mask (oraddr_t addr_mask,
   addr_compare &= addr_mask;
 
   /* Go to the end of the list. */
-  for (pptmp = &dev_list; *pptmp; pptmp = &(*pptmp)->next)
+  for (pptmp = &sim->dev_list; *pptmp; pptmp = &(*pptmp)->next)
     if (((addr_compare >= (*pptmp)->addr_compare) &&
 	 (addr_compare < (*pptmp)->addr_compare + (*pptmp)->size)) ||
 	((addr_compare + size > (*pptmp)->addr_compare) &&
@@ -135,11 +118,11 @@ register_memoryarea_mask (oraddr_t addr_mask,
   if (found_error)
     exit (-1);
 
-  cur_area = *pptmp =
+  sim->cur_area = *pptmp =
     (struct dev_memarea *) malloc (sizeof (struct dev_memarea));
 
   if (mc_dev)
-    mc_area = *pptmp;
+    sim->mc_area = *pptmp;
 
   (*pptmp)->addr_mask = addr_mask;
   (*pptmp)->addr_compare = addr_compare;
@@ -152,22 +135,22 @@ register_memoryarea_mask (oraddr_t addr_mask,
   return *pptmp;
 }
 
-/* Register read and write function for a memory area.   
+/* Register read and write function for a memory area.
    Memory areas should be aligned. Memory area is rounded up to
    fit the nearest 2^n aligment.
-   (used also by peripheral devices like 16450 UART etc.) 
+   (used also by peripheral devices like 16450 UART etc.)
    If mc_dev is 1, this device will be checked first for a match
    and will be accessed in case of overlaping memory areas.
    Only one device can have this set to 1 (used for memory controller) */
 struct dev_memarea *
-reg_mem_area (oraddr_t addr, uint32_t size, unsigned mc_dev,
+reg_mem_area (or1ksim *sim, oraddr_t addr, uint32_t size, unsigned mc_dev,
 	      struct mem_ops *ops)
 {
   unsigned int size_mask = bit_mask (size);
   unsigned int addr_mask = ~size_mask;
   struct dev_memarea *mem;
 
-  mem = register_memoryarea_mask (addr_mask, addr & addr_mask, size_mask + 1,
+  mem = register_memoryarea_mask (sim, addr_mask, addr & addr_mask, size_mask + 1,
 				  mc_dev);
 
   memcpy (&mem->ops, ops, sizeof (struct mem_ops));
@@ -235,30 +218,30 @@ reg_mem_area (oraddr_t addr, uint32_t size, unsigned mc_dev,
 
 /* Check if access is to registered area of memory. */
 struct dev_memarea *
-verify_memoryarea (oraddr_t addr)
+verify_memoryarea (or1ksim* sim, oraddr_t addr)
 {
   struct dev_memarea *ptmp;
 
   /* Check memory controller space first */
-  if (mc_area
-      && (addr & mc_area->addr_mask) ==
-      (mc_area->addr_compare & mc_area->addr_mask))
-    return cur_area = mc_area;
+  if (sim->mc_area
+      && (addr & sim->mc_area->addr_mask) ==
+      (sim->mc_area->addr_compare & sim->mc_area->addr_mask))
+    return sim->cur_area = sim->mc_area;
 
   /* Check cached value */
-  if (cur_area
-      && (addr & cur_area->addr_mask) ==
-      (cur_area->addr_compare & cur_area->addr_mask))
-    return cur_area;
+  if (sim->cur_area
+      && (addr & sim->cur_area->addr_mask) ==
+      (sim->cur_area->addr_compare & sim->cur_area->addr_mask))
+    return sim->cur_area;
 
   /* When mc is enabled, we must check valid also, otherwise we assume it is
      nonzero */
   /* Check list of registered devices. */
-  for (ptmp = dev_list; ptmp; ptmp = ptmp->next)
+  for (ptmp = sim->dev_list; ptmp; ptmp = ptmp->next)
     if ((addr & ptmp->addr_mask) == (ptmp->addr_compare & ptmp->addr_mask)
 	&& ptmp->valid)
-      return cur_area = ptmp;
-  return cur_area = NULL;
+      return sim->cur_area = ptmp;
+  return sim->cur_area = NULL;
 }
 
 /* Sets the valid bit (Used only by memory controllers) */
@@ -277,46 +260,46 @@ adjust_rw_delay (struct dev_memarea *mem, int delayr, int delayw)
 }
 
 static uint8_t
-eval_mem_8_inv (oraddr_t memaddr, void *dat)
+eval_mem_8_inv (or1ksim *sim,oraddr_t memaddr, void *dat)
 {
-  except_handle (EXCEPT_BUSERR, cur_vadd);
+  except_handle (sim,EXCEPT_BUSERR, sim->cur_vadd);
   return 0;
 }
 
 static uint16_t
-eval_mem_16_inv (oraddr_t memaddr, void *dat)
+eval_mem_16_inv (or1ksim *sim,oraddr_t memaddr, void *dat)
 {
-  except_handle (EXCEPT_BUSERR, cur_vadd);
+  except_handle (sim,EXCEPT_BUSERR, sim->cur_vadd);
   return 0;
 }
 
 static uint32_t
-eval_mem_32_inv (oraddr_t memaddr, void *dat)
+eval_mem_32_inv (or1ksim *sim,oraddr_t memaddr, void *dat)
 {
-  except_handle (EXCEPT_BUSERR, cur_vadd);
+  except_handle (sim,EXCEPT_BUSERR, sim->cur_vadd);
   return 0;
 }
 
 static void
-set_mem_8_inv (oraddr_t memaddr, uint8_t val, void *dat)
+set_mem_8_inv (or1ksim *sim,oraddr_t memaddr, uint8_t val, void *dat)
 {
-  except_handle (EXCEPT_BUSERR, cur_vadd);
+  except_handle (sim,EXCEPT_BUSERR, sim->cur_vadd);
 }
 
 static void
-set_mem_16_inv (oraddr_t memaddr, uint16_t val, void *dat)
+set_mem_16_inv (or1ksim *sim,oraddr_t memaddr, uint16_t val, void *dat)
 {
-  except_handle (EXCEPT_BUSERR, cur_vadd);
+  except_handle (sim,EXCEPT_BUSERR, sim->cur_vadd);
 }
 
 static void
-set_mem_32_inv (oraddr_t memaddr, uint32_t val, void *dat)
+set_mem_32_inv (or1ksim *sim,oraddr_t memaddr, uint32_t val, void *dat)
 {
-  except_handle (EXCEPT_BUSERR, cur_vadd);
+  except_handle (sim,EXCEPT_BUSERR, sim->cur_vadd);
 }
 
 uint8_t
-eval_mem_8_inv_direct (oraddr_t memaddr, void *dat)
+eval_mem_8_inv_direct (or1ksim *sim, oraddr_t memaddr, void *dat)
 {
   struct dev_memarea *mem = dat;
 
@@ -326,7 +309,7 @@ eval_mem_8_inv_direct (oraddr_t memaddr, void *dat)
 }
 
 uint16_t
-eval_mem_16_inv_direct (oraddr_t memaddr, void *dat)
+eval_mem_16_inv_direct (or1ksim *sim, oraddr_t memaddr, void *dat)
 {
   struct dev_memarea *mem = dat;
 
@@ -336,7 +319,7 @@ eval_mem_16_inv_direct (oraddr_t memaddr, void *dat)
 }
 
 uint32_t
-eval_mem_32_inv_direct (oraddr_t memaddr, void *dat)
+eval_mem_32_inv_direct (or1ksim *sim, oraddr_t memaddr, void *dat)
 {
   struct dev_memarea *mem = dat;
 
@@ -346,7 +329,7 @@ eval_mem_32_inv_direct (oraddr_t memaddr, void *dat)
 }
 
 void
-set_mem_8_inv_direct (oraddr_t memaddr, uint8_t val, void *dat)
+set_mem_8_inv_direct (or1ksim *sim, oraddr_t memaddr, uint8_t val, void *dat)
 {
   struct dev_memarea *mem = dat;
 
@@ -355,7 +338,7 @@ set_mem_8_inv_direct (oraddr_t memaddr, uint8_t val, void *dat)
 }
 
 void
-set_mem_16_inv_direct (oraddr_t memaddr, uint16_t val, void *dat)
+set_mem_16_inv_direct (or1ksim *sim, oraddr_t memaddr, uint16_t val, void *dat)
 {
   struct dev_memarea *mem = dat;
 
@@ -364,7 +347,7 @@ set_mem_16_inv_direct (oraddr_t memaddr, uint16_t val, void *dat)
 }
 
 void
-set_mem_32_inv_direct (oraddr_t memaddr, uint32_t val, void *dat)
+set_mem_32_inv_direct (or1ksim *sim, oraddr_t memaddr, uint32_t val, void *dat)
 {
   struct dev_memarea *mem = dat;
 
@@ -378,21 +361,21 @@ set_mem_32_inv_direct (oraddr_t memaddr, uint32_t val, void *dat)
  * {i,d}c_simulate_read.  _Don't_ call it from anywere else.
  */
 uint32_t
-evalsim_mem32 (oraddr_t memaddr, oraddr_t vaddr)
+evalsim_mem32 (or1ksim *sim,oraddr_t memaddr, oraddr_t vaddr)
 {
   struct dev_memarea *mem;
 
-  if ((mem = verify_memoryarea (memaddr)))
+  if ((mem = verify_memoryarea (sim, memaddr)))
     {
-      runtime.sim.mem_cycles += mem->ops.delayr;
-      return mem->ops.readfunc32 (memaddr & mem->size_mask,
+      sim->runtime.sim.mem_cycles += mem->ops.delayr;
+      return mem->ops.readfunc32 (sim, memaddr & mem->size_mask,
 				  mem->ops.read_dat32);
     }
   else
     {
       PRINTF ("EXCEPTION: read out of memory (32-bit access to %" PRIxADDR
 	      ")\n", memaddr);
-      except_handle (EXCEPT_BUSERR, vaddr);
+      except_handle (sim,EXCEPT_BUSERR, vaddr);
     }
 
   return 0;
@@ -404,21 +387,21 @@ evalsim_mem32 (oraddr_t memaddr, oraddr_t vaddr)
  * {i,d}c_simulate_read.  _Don't_ call it from anywere else.
  */
 uint16_t
-evalsim_mem16 (oraddr_t memaddr, oraddr_t vaddr)
+evalsim_mem16 (or1ksim *sim,oraddr_t memaddr, oraddr_t vaddr)
 {
   struct dev_memarea *mem;
 
-  if ((mem = verify_memoryarea (memaddr)))
+  if ((mem = verify_memoryarea (sim, memaddr)))
     {
-      runtime.sim.mem_cycles += mem->ops.delayr;
-      return mem->ops.readfunc16 (memaddr & mem->size_mask,
+      sim->runtime.sim.mem_cycles += mem->ops.delayr;
+      return mem->ops.readfunc16 (sim, memaddr & mem->size_mask,
 				  mem->ops.read_dat16);
     }
   else
     {
       PRINTF ("EXCEPTION: read out of memory (16-bit access to %" PRIxADDR
 	      ")\n", memaddr);
-      except_handle (EXCEPT_BUSERR, vaddr);
+      except_handle (sim,EXCEPT_BUSERR, vaddr);
     }
 
   return 0;
@@ -430,21 +413,21 @@ evalsim_mem16 (oraddr_t memaddr, oraddr_t vaddr)
  * {i,d}c_simulate_read.  _Don't_ call it from anywere else.
  */
 uint8_t
-evalsim_mem8 (oraddr_t memaddr, oraddr_t vaddr)
+evalsim_mem8 (or1ksim *sim,oraddr_t memaddr, oraddr_t vaddr)
 {
   struct dev_memarea *mem;
 
-  if ((mem = verify_memoryarea (memaddr)))
+  if ((mem = verify_memoryarea (sim, memaddr)))
     {
-      runtime.sim.mem_cycles += mem->ops.delayr;
-      return mem->ops.readfunc8 (memaddr & mem->size_mask,
+      sim->runtime.sim.mem_cycles += mem->ops.delayr;
+      return mem->ops.readfunc8 (sim , memaddr & mem->size_mask,
 				 mem->ops.read_dat8);
     }
   else
     {
       PRINTF ("EXCEPTION: read out of memory (8-bit access to %" PRIxADDR
 	      ")\n", memaddr);
-      except_handle (EXCEPT_BUSERR, vaddr);
+      except_handle (sim,EXCEPT_BUSERR, vaddr);
     }
 
   return 0;
@@ -455,34 +438,34 @@ evalsim_mem8 (oraddr_t memaddr, oraddr_t vaddr)
  * STATISTICS OK (only used for cpu_access, that is architectural access)
  */
 uint32_t
-eval_mem32 (oraddr_t memaddr, int *breakpoint)
+eval_mem32 (or1ksim *sim,oraddr_t memaddr, int *breakpoint)
 {
   uint32_t temp;
   oraddr_t phys_memaddr;
 
-  if (config.sim.mprofile)
-    mprofile (memaddr, MPROF_32 | MPROF_READ);
+  if (sim->config.sim.mprofile)
+    mprofile (sim,memaddr, MPROF_32 | MPROF_READ);
 
   if (memaddr & 3)
     {
-      except_handle (EXCEPT_ALIGN, memaddr);
+      except_handle (sim,EXCEPT_ALIGN, memaddr);
       return 0;
     }
 
-  if (config.debug.enabled)
-    *breakpoint += check_debug_unit (DebugLoadAddress, memaddr);	/* 28/05/01 CZ */
+  if (sim->config.debug.enabled)
+    *breakpoint += check_debug_unit (sim,DebugLoadAddress, memaddr);	/* 28/05/01 CZ */
 
-  phys_memaddr = dmmu_translate (memaddr, 0);
-  if (except_pending)
+  phys_memaddr = dmmu_translate (sim, memaddr, 0);
+  if (sim->except_pending)
     return 0;
 
-  if (config.dc.enabled)
-    temp = dc_simulate_read (phys_memaddr, memaddr, 4);
+  if (sim->config.dc.enabled)
+    temp = dc_simulate_read (sim,phys_memaddr, memaddr, 4);
   else
-    temp = evalsim_mem32 (phys_memaddr, memaddr);
+    temp = evalsim_mem32 (sim,phys_memaddr, memaddr);
 
-  if (config.debug.enabled)
-    *breakpoint += check_debug_unit (DebugLoadData, temp);	/* MM170901 */
+  if (sim->config.debug.enabled)
+    *breakpoint += check_debug_unit (sim,DebugLoadData, temp);	/* MM170901 */
 
   return temp;
 }
@@ -492,7 +475,7 @@ eval_mem32 (oraddr_t memaddr, int *breakpoint)
  * STATISTICS OK
  */
 uint32_t
-eval_direct32 (oraddr_t memaddr, int through_mmu, int through_dc)
+eval_direct32 (or1ksim *sim,oraddr_t memaddr, int through_mmu, int through_dc)
 {
   oraddr_t phys_memaddr;
   struct dev_memarea *mem;
@@ -507,14 +490,14 @@ eval_direct32 (oraddr_t memaddr, int through_mmu, int through_dc)
   phys_memaddr = memaddr;
 
   if (through_mmu)
-    phys_memaddr = peek_into_dtlb (memaddr, 0, through_dc);
+    phys_memaddr = peek_into_dtlb (sim, memaddr, 0, through_dc);
 
   if (through_dc)
-    return dc_simulate_read (phys_memaddr, memaddr, 4);
+    return dc_simulate_read (sim,phys_memaddr, memaddr, 4);
   else
     {
-      if ((mem = verify_memoryarea (phys_memaddr)))
-	return mem->direct_ops.readfunc32 (phys_memaddr & mem->size_mask,
+      if ((mem = verify_memoryarea (sim, phys_memaddr)))
+	return mem->direct_ops.readfunc32 (sim, phys_memaddr & mem->size_mask,
 					   mem->direct_ops.read_dat32);
       else
 	PRINTF ("ERR: 32-bit read out of memory area: %" PRIxADDR
@@ -530,32 +513,32 @@ eval_direct32 (oraddr_t memaddr, int through_mmu, int through_dc)
  * STATISTICS OK (only used for cpu_access, that is architectural access)
  */
 uint32_t
-eval_insn (oraddr_t memaddr, int *breakpoint)
+eval_insn (or1ksim *sim,oraddr_t memaddr, int *breakpoint)
 {
   uint32_t temp;
   oraddr_t phys_memaddr;
 
-  if (config.sim.mprofile)
-    mprofile (memaddr, MPROF_32 | MPROF_FETCH);
+  if (sim->config.sim.mprofile)
+    mprofile (sim,memaddr, MPROF_32 | MPROF_FETCH);
 
   phys_memaddr = memaddr;
 #if !(DYNAMIC_EXECUTION)
-  phys_memaddr = immu_translate (memaddr);
+  phys_memaddr = immu_translate (sim, memaddr);
 
-  if (except_pending)
+  if (sim->except_pending)
     return 0;
 #endif
 
-  if (config.debug.enabled)
-    *breakpoint += check_debug_unit (DebugInstructionFetch, memaddr);
+  if (sim->config.debug.enabled)
+    *breakpoint += check_debug_unit (sim,DebugInstructionFetch, memaddr);
 
-  if ((NULL != ic_state) && ic_state->enabled)
-    temp = ic_simulate_fetch (phys_memaddr, memaddr);
+  if ((NULL != sim->ic_state) && sim->ic_state->enabled)
+    temp = ic_simulate_fetch (sim, phys_memaddr, memaddr);
   else
-    temp = evalsim_mem32 (phys_memaddr, memaddr);
+    temp = evalsim_mem32 (sim,phys_memaddr, memaddr);
 
-  if (config.debug.enabled)
-    *breakpoint += check_debug_unit (DebugLoadData, temp);
+  if (sim->config.debug.enabled)
+    *breakpoint += check_debug_unit (sim,DebugLoadData, temp);
   return temp;
 }
 
@@ -564,44 +547,44 @@ eval_insn (oraddr_t memaddr, int *breakpoint)
  * STATISTICS OK (only used for cpu_access, that is architectural access)
  */
 uint16_t
-eval_mem16 (oraddr_t memaddr, int *breakpoint)
+eval_mem16 (or1ksim *sim,oraddr_t memaddr, int *breakpoint)
 {
   uint16_t temp;
   oraddr_t phys_memaddr;
 
-  if (config.sim.mprofile)
-    mprofile (memaddr, MPROF_16 | MPROF_READ);
+  if (sim->config.sim.mprofile)
+    mprofile (sim,memaddr, MPROF_16 | MPROF_READ);
 
   if (memaddr & 1)
     {
-      except_handle (EXCEPT_ALIGN, memaddr);
+      except_handle (sim,EXCEPT_ALIGN, memaddr);
       return 0;
     }
 
-  if (config.debug.enabled)
-    *breakpoint += check_debug_unit (DebugLoadAddress, memaddr);	/* 28/05/01 CZ */
+  if (sim->config.debug.enabled)
+    *breakpoint += check_debug_unit (sim,DebugLoadAddress, memaddr);	/* 28/05/01 CZ */
 
-  phys_memaddr = dmmu_translate (memaddr, 0);
-  if (except_pending)
+  phys_memaddr = dmmu_translate (sim,memaddr, 0);
+  if (sim->except_pending)
     return 0;
 
-  if (config.dc.enabled)
-    temp = dc_simulate_read (phys_memaddr, memaddr, 2);
+  if (sim->config.dc.enabled)
+    temp = dc_simulate_read (sim,phys_memaddr, memaddr, 2);
   else
-    temp = evalsim_mem16 (phys_memaddr, memaddr);
+    temp = evalsim_mem16 (sim,phys_memaddr, memaddr);
 
-  if (config.debug.enabled)
-    *breakpoint += check_debug_unit (DebugLoadData, temp);	/* MM170901 */
+  if (sim->config.debug.enabled)
+    *breakpoint += check_debug_unit (sim,DebugLoadData, temp);	/* MM170901 */
 
   return temp;
 }
 
 /* for simulator accesses, the ones that cpu wouldn't do
- * 
+ *
  * STATISTICS OK.
  */
 uint16_t
-eval_direct16 (oraddr_t memaddr, int through_mmu, int through_dc)
+eval_direct16 (or1ksim *sim,oraddr_t memaddr, int through_mmu, int through_dc)
 {
   oraddr_t phys_memaddr;
   struct dev_memarea *mem;
@@ -616,14 +599,14 @@ eval_direct16 (oraddr_t memaddr, int through_mmu, int through_dc)
   phys_memaddr = memaddr;
 
   if (through_mmu)
-    phys_memaddr = peek_into_dtlb (memaddr, 0, through_dc);
+    phys_memaddr = peek_into_dtlb (sim, memaddr, 0, through_dc);
 
   if (through_dc)
-    return dc_simulate_read (phys_memaddr, memaddr, 2);
+    return dc_simulate_read (sim,phys_memaddr, memaddr, 2);
   else
     {
-      if ((mem = verify_memoryarea (phys_memaddr)))
-	return mem->direct_ops.readfunc16 (phys_memaddr & mem->size_mask,
+      if ((mem = verify_memoryarea (sim, phys_memaddr)))
+	return mem->direct_ops.readfunc16 (sim, phys_memaddr & mem->size_mask,
 					   mem->direct_ops.read_dat16);
       else
 	PRINTF ("ERR: 16-bit read out of memory area: %" PRIxADDR
@@ -633,33 +616,33 @@ eval_direct16 (oraddr_t memaddr, int through_mmu, int through_dc)
   return 0;
 }
 
-/* Returns 8-bit values from mem array. 
+/* Returns 8-bit values from mem array.
  *
  * STATISTICS OK (only used for cpu_access, that is architectural access)
  */
 uint8_t
-eval_mem8 (oraddr_t memaddr, int *breakpoint)
+eval_mem8 (or1ksim *sim,oraddr_t memaddr, int *breakpoint)
 {
   uint8_t temp;
   oraddr_t phys_memaddr;
 
-  if (config.sim.mprofile)
-    mprofile (memaddr, MPROF_8 | MPROF_READ);
+  if (sim->config.sim.mprofile)
+    mprofile (sim,memaddr, MPROF_8 | MPROF_READ);
 
-  if (config.debug.enabled)
-    *breakpoint += check_debug_unit (DebugLoadAddress, memaddr);	/* 28/05/01 CZ */
+  if (sim->config.debug.enabled)
+    *breakpoint += check_debug_unit (sim,DebugLoadAddress, memaddr);	/* 28/05/01 CZ */
 
-  phys_memaddr = dmmu_translate (memaddr, 0);
-  if (except_pending)
+  phys_memaddr = dmmu_translate (sim,memaddr, 0);
+  if (sim->except_pending)
     return 0;
 
-  if (config.dc.enabled)
-    temp = dc_simulate_read (phys_memaddr, memaddr, 1);
+  if (sim->config.dc.enabled)
+    temp = dc_simulate_read (sim,phys_memaddr, memaddr, 1);
   else
-    temp = evalsim_mem8 (phys_memaddr, memaddr);
+    temp = evalsim_mem8 (sim,phys_memaddr, memaddr);
 
-  if (config.debug.enabled)
-    *breakpoint += check_debug_unit (DebugLoadData, temp);	/* MM170901 */
+  if (sim->config.debug.enabled)
+    *breakpoint += check_debug_unit (sim,DebugLoadData, temp);	/* MM170901 */
   return temp;
 }
 
@@ -668,7 +651,7 @@ eval_mem8 (oraddr_t memaddr, int *breakpoint)
  * STATISTICS OK.
  */
 uint8_t
-eval_direct8 (oraddr_t memaddr, int through_mmu, int through_dc)
+eval_direct8 (or1ksim *sim,oraddr_t memaddr, int through_mmu, int through_dc)
 {
   oraddr_t phys_memaddr;
   struct dev_memarea *mem;
@@ -676,14 +659,14 @@ eval_direct8 (oraddr_t memaddr, int through_mmu, int through_dc)
   phys_memaddr = memaddr;
 
   if (through_mmu)
-    phys_memaddr = peek_into_dtlb (memaddr, 0, through_dc);
+    phys_memaddr = peek_into_dtlb (sim, memaddr, 0, through_dc);
 
   if (through_dc)
-    return dc_simulate_read (phys_memaddr, memaddr, 1);
+    return dc_simulate_read (sim,phys_memaddr, memaddr, 1);
   else
     {
-      if ((mem = verify_memoryarea (phys_memaddr)))
-	return mem->direct_ops.readfunc8 (phys_memaddr & mem->size_mask,
+      if ((mem = verify_memoryarea (sim, phys_memaddr)))
+	return mem->direct_ops.readfunc8 (sim, phys_memaddr & mem->size_mask,
 					  mem->direct_ops.read_dat8);
       else
 	PRINTF ("ERR: 8-bit read out of memory area: %" PRIxADDR
@@ -699,15 +682,15 @@ eval_direct8 (oraddr_t memaddr, int through_mmu, int through_dc)
  * dc_simulate_write.  _Don't_ call it from anywere else.
  */
 void
-setsim_mem32 (oraddr_t memaddr, oraddr_t vaddr, uint32_t value)
+setsim_mem32 (or1ksim *sim,oraddr_t memaddr, oraddr_t vaddr, uint32_t value)
 {
   struct dev_memarea *mem;
 
-  if ((mem = verify_memoryarea (memaddr)))
+  if ((mem = verify_memoryarea (sim, memaddr)))
     {
-      cur_vadd = vaddr;
-      runtime.sim.mem_cycles += mem->ops.delayw;
-      mem->ops.writefunc32 (memaddr & mem->size_mask, value,
+      sim->cur_vadd = vaddr;
+      sim->runtime.sim.mem_cycles += mem->ops.delayw;
+      mem->ops.writefunc32 (sim, memaddr & mem->size_mask, value,
 			    mem->ops.write_dat32);
 #if DYNAMIC_EXECUTION
       dyn_checkwrite (memaddr);
@@ -717,7 +700,7 @@ setsim_mem32 (oraddr_t memaddr, oraddr_t vaddr, uint32_t value)
     {
       PRINTF ("EXCEPTION: write out of memory (32-bit access to %" PRIxADDR
 	      ")\n", memaddr);
-      except_handle (EXCEPT_BUSERR, vaddr);
+      except_handle (sim,EXCEPT_BUSERR, vaddr);
     }
 }
 
@@ -727,15 +710,15 @@ setsim_mem32 (oraddr_t memaddr, oraddr_t vaddr, uint32_t value)
  * dc_simulate_write.  _Don't_ call it from anywere else.
  */
 void
-setsim_mem16 (oraddr_t memaddr, oraddr_t vaddr, uint16_t value)
+setsim_mem16 (or1ksim *sim,oraddr_t memaddr, oraddr_t vaddr, uint16_t value)
 {
   struct dev_memarea *mem;
 
-  if ((mem = verify_memoryarea (memaddr)))
+  if ((mem = verify_memoryarea (sim, memaddr)))
     {
-      cur_vadd = vaddr;
-      runtime.sim.mem_cycles += mem->ops.delayw;
-      mem->ops.writefunc16 (memaddr & mem->size_mask, value,
+      sim->cur_vadd = vaddr;
+      sim->runtime.sim.mem_cycles += mem->ops.delayw;
+      mem->ops.writefunc16 (sim, memaddr & mem->size_mask, value,
 			    mem->ops.write_dat16);
 #if DYNAMIC_EXECUTION
       dyn_checkwrite (memaddr);
@@ -745,7 +728,7 @@ setsim_mem16 (oraddr_t memaddr, oraddr_t vaddr, uint16_t value)
     {
       PRINTF ("EXCEPTION: write out of memory (16-bit access to %" PRIxADDR
 	      ")\n", memaddr);
-      except_handle (EXCEPT_BUSERR, vaddr);
+      except_handle (sim,EXCEPT_BUSERR, vaddr);
     }
 }
 
@@ -755,15 +738,15 @@ setsim_mem16 (oraddr_t memaddr, oraddr_t vaddr, uint16_t value)
  * dc_simulate_write.  _Don't_ call it from anywere else.
  */
 void
-setsim_mem8 (oraddr_t memaddr, oraddr_t vaddr, uint8_t value)
+setsim_mem8 (or1ksim *sim,oraddr_t memaddr, oraddr_t vaddr, uint8_t value)
 {
   struct dev_memarea *mem;
 
-  if ((mem = verify_memoryarea (memaddr)))
+  if ((mem = verify_memoryarea (sim, memaddr)))
     {
-      cur_vadd = vaddr;
-      runtime.sim.mem_cycles += mem->ops.delayw;
-      mem->ops.writefunc8 (memaddr & mem->size_mask, value,
+      sim->cur_vadd = vaddr;
+      sim->runtime.sim.mem_cycles += mem->ops.delayw;
+      mem->ops.writefunc8 (sim, memaddr & mem->size_mask, value,
 			   mem->ops.write_dat8);
 #if DYNAMIC_EXECUTION
       dyn_checkwrite (memaddr);
@@ -773,57 +756,57 @@ setsim_mem8 (oraddr_t memaddr, oraddr_t vaddr, uint8_t value)
     {
       PRINTF ("EXCEPTION: write out of memory (8-bit access to %" PRIxADDR
 	      ")\n", memaddr);
-      except_handle (EXCEPT_BUSERR, vaddr);
+      except_handle (sim,EXCEPT_BUSERR, vaddr);
     }
 }
 
-/* Set mem, 32-bit. Big endian version. 
+/* Set mem, 32-bit. Big endian version.
  *
  * STATISTICS OK. (the only suspicious usage is in sim-cmd.c,
  *                 where this instruction is used for patching memory,
- *                 wether this is cpu or architectual access is yet to 
+ *                 wether this is cpu or architectual access is yet to
  *                 be decided)
  */
 void
-set_mem32 (oraddr_t memaddr, uint32_t value, int *breakpoint)
+set_mem32 (or1ksim *sim,oraddr_t memaddr, uint32_t value, int *breakpoint)
 {
   oraddr_t phys_memaddr;
 
-  if (config.sim.mprofile)
-    mprofile (memaddr, MPROF_32 | MPROF_WRITE);
+  if (sim->config.sim.mprofile)
+    mprofile (sim,memaddr, MPROF_32 | MPROF_WRITE);
 
   if (memaddr & 3)
     {
-      except_handle (EXCEPT_ALIGN, memaddr);
+      except_handle (sim,EXCEPT_ALIGN, memaddr);
       return;
     }
 
-  phys_memaddr = dmmu_translate (memaddr, 1);;
+  phys_memaddr = dmmu_translate (sim, memaddr, 1);;
   /* If we produced exception don't set anything */
-  if (except_pending)
+  if (sim->except_pending)
     return;
 
-  if (config.debug.enabled)
+  if (sim->config.debug.enabled)
     {
-      *breakpoint += check_debug_unit (DebugStoreAddress, memaddr);	/* 28/05/01 CZ */
-      *breakpoint += check_debug_unit (DebugStoreData, value);
+      *breakpoint += check_debug_unit (sim,DebugStoreAddress, memaddr);	/* 28/05/01 CZ */
+      *breakpoint += check_debug_unit (sim,DebugStoreData, value);
     }
 
-  if (config.dc.enabled)
-    dc_simulate_write (phys_memaddr, memaddr, value, 4);
+  if (sim->config.dc.enabled)
+    dc_simulate_write (sim,phys_memaddr, memaddr, value, 4);
   else
-    setsim_mem32 (phys_memaddr, memaddr, value);
+    setsim_mem32 (sim,phys_memaddr, memaddr, value);
 
-  if (cur_area && cur_area->log)
-    fprintf (cur_area->log, "[%" PRIxADDR "] -> write %08" PRIx32 "\n",
+  if (sim->cur_area && sim->cur_area->log)
+    fprintf (sim->cur_area->log, "[%" PRIxADDR "] -> write %08" PRIx32 "\n",
 	     memaddr, value);
 }
 
-/* 
+/*
  * STATISTICS NOT OK.
  */
 void
-set_direct32 (oraddr_t memaddr, uint32_t value, int through_mmu,
+set_direct32 (or1ksim *sim,oraddr_t memaddr, uint32_t value, int through_mmu,
 	      int through_dc)
 {
   oraddr_t phys_memaddr;
@@ -842,23 +825,23 @@ set_direct32 (oraddr_t memaddr, uint32_t value, int through_mmu,
     {
       /* 0 - no write access, we do not want a DPF exception do we ;)
        */
-      phys_memaddr = peek_into_dtlb (memaddr, 1, through_dc);
+      phys_memaddr = peek_into_dtlb (sim, memaddr, 1, through_dc);
     }
 
   if (through_dc)
-    dc_simulate_write (memaddr, memaddr, value, 4);
+    dc_simulate_write (sim,memaddr, memaddr, value, 4);
   else
     {
-      if ((mem = verify_memoryarea (phys_memaddr)))
-	mem->direct_ops.writefunc32 (phys_memaddr & mem->size_mask, value,
+      if ((mem = verify_memoryarea (sim, phys_memaddr)))
+	mem->direct_ops.writefunc32 (sim, phys_memaddr & mem->size_mask, value,
 				     mem->direct_ops.write_dat32);
       else
 	PRINTF ("ERR: 32-bit write out of memory area: %" PRIxADDR
 		" (physical: %" PRIxADDR ")\n", memaddr, phys_memaddr);
     }
 
-  if (cur_area && cur_area->log)
-    fprintf (cur_area->log, "[%" PRIxADDR "] -> DIRECT write %08" PRIx32 "\n",
+  if (sim->cur_area && sim->cur_area->log)
+    fprintf (sim->cur_area->log, "[%" PRIxADDR "] -> DIRECT write %08" PRIx32 "\n",
 	     memaddr, value);
 }
 
@@ -866,37 +849,37 @@ set_direct32 (oraddr_t memaddr, uint32_t value, int through_mmu,
 /* Set mem, 16-bit. Big endian version. */
 
 void
-set_mem16 (oraddr_t memaddr, uint16_t value, int *breakpoint)
+set_mem16 (or1ksim *sim,oraddr_t memaddr, uint16_t value, int *breakpoint)
 {
   oraddr_t phys_memaddr;
 
-  if (config.sim.mprofile)
-    mprofile (memaddr, MPROF_16 | MPROF_WRITE);
+  if (sim->config.sim.mprofile)
+    mprofile (sim,memaddr, MPROF_16 | MPROF_WRITE);
 
   if (memaddr & 1)
     {
-      except_handle (EXCEPT_ALIGN, memaddr);
+      except_handle (sim,EXCEPT_ALIGN, memaddr);
       return;
     }
 
-  phys_memaddr = dmmu_translate (memaddr, 1);;
+  phys_memaddr = dmmu_translate (sim, memaddr, 1);;
   /* If we produced exception don't set anything */
-  if (except_pending)
+  if (sim->except_pending)
     return;
 
-  if (config.debug.enabled)
+  if (sim->config.debug.enabled)
     {
-      *breakpoint += check_debug_unit (DebugStoreAddress, memaddr);	/* 28/05/01 CZ */
-      *breakpoint += check_debug_unit (DebugStoreData, value);
+      *breakpoint += check_debug_unit (sim,DebugStoreAddress, memaddr);	/* 28/05/01 CZ */
+      *breakpoint += check_debug_unit (sim,DebugStoreData, value);
     }
 
-  if (config.dc.enabled)
-    dc_simulate_write (phys_memaddr, memaddr, value, 2);
+  if (sim->config.dc.enabled)
+    dc_simulate_write (sim,phys_memaddr, memaddr, value, 2);
   else
-    setsim_mem16 (phys_memaddr, memaddr, value);
+    setsim_mem16 (sim,phys_memaddr, memaddr, value);
 
-  if (cur_area && cur_area->log)
-    fprintf (cur_area->log, "[%" PRIxADDR "] -> write %04" PRIx16 "\n",
+  if (sim->cur_area && sim->cur_area->log)
+    fprintf (sim->cur_area->log, "[%" PRIxADDR "] -> write %04" PRIx16 "\n",
 	     memaddr, value);
 }
 
@@ -904,7 +887,7 @@ set_mem16 (oraddr_t memaddr, uint16_t value, int *breakpoint)
  * STATISTICS NOT OK.
  */
 void
-set_direct16 (oraddr_t memaddr, uint16_t value, int through_mmu,
+set_direct16 (or1ksim *sim,oraddr_t memaddr, uint16_t value, int through_mmu,
 	      int through_dc)
 {
   oraddr_t phys_memaddr;
@@ -923,55 +906,55 @@ set_direct16 (oraddr_t memaddr, uint16_t value, int through_mmu,
     {
       /* 0 - no write access, we do not want a DPF exception do we ;)
        */
-      phys_memaddr = peek_into_dtlb (memaddr, 0, through_dc);
+      phys_memaddr = peek_into_dtlb (sim, memaddr, 0, through_dc);
     }
 
   if (through_dc)
-    dc_simulate_write (memaddr, memaddr, value, 2);
+    dc_simulate_write (sim,memaddr, memaddr, value, 2);
   else
     {
-      if ((mem = verify_memoryarea (phys_memaddr)))
-	mem->direct_ops.writefunc16 (phys_memaddr & mem->size_mask, value,
+      if ((mem = verify_memoryarea (sim, phys_memaddr)))
+	mem->direct_ops.writefunc16 (sim, phys_memaddr & mem->size_mask, value,
 				     mem->direct_ops.write_dat16);
       else
 	PRINTF ("ERR: 16-bit write out of memory area: %" PRIxADDR
 		" (physical: %" PRIxADDR "\n", memaddr, phys_memaddr);
     }
 
-  if (cur_area && cur_area->log)
-    fprintf (cur_area->log, "[%" PRIxADDR "] -> DIRECT write %04" PRIx16 "\n",
+  if (sim->cur_area && sim->cur_area->log)
+    fprintf (sim->cur_area->log, "[%" PRIxADDR "] -> DIRECT write %04" PRIx16 "\n",
 	     memaddr, value);
 }
 
 /* Set mem, 8-bit. */
 void
-set_mem8 (oraddr_t memaddr, uint8_t value, int *breakpoint)
+set_mem8 (or1ksim *sim,oraddr_t memaddr, uint8_t value, int *breakpoint)
 {
   oraddr_t phys_memaddr;
 
-  if (config.sim.mprofile)
-    mprofile (memaddr, MPROF_8 | MPROF_WRITE);
+  if (sim->config.sim.mprofile)
+    mprofile (sim,memaddr, MPROF_8 | MPROF_WRITE);
 
   phys_memaddr = memaddr;
 
-  phys_memaddr = dmmu_translate (memaddr, 1);;
+  phys_memaddr = dmmu_translate (sim, memaddr, 1);;
   /* If we produced exception don't set anything */
-  if (except_pending)
+  if (sim->except_pending)
     return;
 
-  if (config.debug.enabled)
+  if (sim->config.debug.enabled)
     {
-      *breakpoint += check_debug_unit (DebugStoreAddress, memaddr);	/* 28/05/01 CZ */
-      *breakpoint += check_debug_unit (DebugStoreData, value);
+      *breakpoint += check_debug_unit (sim,DebugStoreAddress, memaddr);	/* 28/05/01 CZ */
+      *breakpoint += check_debug_unit (sim,DebugStoreData, value);
     }
 
-  if (config.dc.enabled)
-    dc_simulate_write (phys_memaddr, memaddr, value, 1);
+  if (sim->config.dc.enabled)
+    dc_simulate_write (sim,phys_memaddr, memaddr, value, 1);
   else
-    setsim_mem8 (phys_memaddr, memaddr, value);
+    setsim_mem8 (sim,phys_memaddr, memaddr, value);
 
-  if (cur_area && cur_area->log)
-    fprintf (cur_area->log, "[%" PRIxADDR "] -> write %02" PRIx8 "\n",
+  if (sim->cur_area && sim->cur_area->log)
+    fprintf (sim->cur_area->log, "[%" PRIxADDR "] -> write %02" PRIx8 "\n",
 	     memaddr, value);
 }
 
@@ -979,7 +962,7 @@ set_mem8 (oraddr_t memaddr, uint8_t value, int *breakpoint)
  * STATISTICS NOT OK.
  */
 void
-set_direct8 (oraddr_t memaddr, uint8_t value, int through_mmu, int through_dc)
+set_direct8 (or1ksim *sim,oraddr_t memaddr, uint8_t value, int through_mmu, int through_dc)
 {
   oraddr_t phys_memaddr;
   struct dev_memarea *mem;
@@ -990,23 +973,23 @@ set_direct8 (oraddr_t memaddr, uint8_t value, int through_mmu, int through_dc)
     {
       /* 0 - no write access, we do not want a DPF exception do we ;)
        */
-      phys_memaddr = peek_into_dtlb (memaddr, 0, through_dc);
+      phys_memaddr = peek_into_dtlb (sim, memaddr, 0, through_dc);
     }
 
   if (through_dc)
-    dc_simulate_write (phys_memaddr, memaddr, value, 1);
+    dc_simulate_write (sim,phys_memaddr, memaddr, value, 1);
   else
     {
-      if ((mem = verify_memoryarea (phys_memaddr)))
-	mem->direct_ops.writefunc8 (phys_memaddr & mem->size_mask, value,
+      if ((mem = verify_memoryarea (sim, phys_memaddr)))
+	mem->direct_ops.writefunc8 (sim, phys_memaddr & mem->size_mask, value,
 				    mem->direct_ops.write_dat8);
       else
 	PRINTF ("ERR: 8-bit write out of memory area: %" PRIxADDR
 		" (physical: %" PRIxADDR "\n", memaddr, phys_memaddr);
     }
 
-  if (cur_area && cur_area->log)
-    fprintf (cur_area->log, "[%" PRIxADDR "] -> DIRECT write %02" PRIx8 "\n",
+  if (sim->cur_area && sim->cur_area->log)
+    fprintf (sim->cur_area->log, "[%" PRIxADDR "] -> DIRECT write %02" PRIx8 "\n",
 	     memaddr, value);
 }
 
@@ -1016,7 +999,7 @@ set_direct8 (oraddr_t memaddr, uint8_t value, int through_mmu, int through_dc)
  *                 loading.
  */
 void
-set_program32 (oraddr_t memaddr, uint32_t value)
+set_program32 (or1ksim *sim, oraddr_t memaddr, uint32_t value)
 {
   struct dev_memarea *mem;
 
@@ -1026,9 +1009,9 @@ set_program32 (oraddr_t memaddr, uint32_t value)
       return;
     }
 
-  if ((mem = verify_memoryarea (memaddr)))
+  if ((mem = verify_memoryarea (sim, memaddr)))
     {
-      mem->ops.writeprog32 (memaddr & mem->size_mask, value,
+      mem->ops.writeprog32 (sim, memaddr & mem->size_mask, value,
 			    mem->ops.writeprog32_dat);
     }
   else
@@ -1041,13 +1024,13 @@ set_program32 (oraddr_t memaddr, uint32_t value)
  *                loading.
  */
 void
-set_program8 (oraddr_t memaddr, uint8_t value)
+set_program8 (or1ksim *sim, oraddr_t memaddr, uint8_t value)
 {
   struct dev_memarea *mem;
 
-  if ((mem = verify_memoryarea (memaddr)))
+  if ((mem = verify_memoryarea (sim, memaddr)))
     {
-      mem->ops.writeprog8 (memaddr & mem->size_mask, value,
+      mem->ops.writeprog8 (sim, memaddr & mem->size_mask, value,
 			   mem->ops.writeprog8_dat);
     }
   else
@@ -1071,14 +1054,14 @@ set_program8 (oraddr_t memaddr, uint8_t value)
    @param[in] to      End address of the area of memory                      */
 /*---------------------------------------------------------------------------*/
 void
-dump_memory (oraddr_t from, oraddr_t to)
+dump_memory (or1ksim *sim,oraddr_t from, oraddr_t to)
 {
   const int ROW_LEN = 16;
   oraddr_t i;			/* Row counter */
 
   for (i = from; i < to; i += ROW_LEN)
     {
-      struct label_entry *entry = get_label (i);
+      struct label_entry *entry = get_label (sim, i);
       oraddr_t j;		/* Index in row */
 
       PRINTF ("%" PRIxADDR, i);
@@ -1098,9 +1081,9 @@ dump_memory (oraddr_t from, oraddr_t to)
 
       for (j = 0; j < ROW_LEN; j++)
 	{
-	  if (verify_memoryarea (i + j))
+	  if (verify_memoryarea (sim, i + j))
 	    {
-	      PRINTF ("%02" PRIx8 " ", eval_direct8 (i + j, 0, 0));
+	      PRINTF ("%02" PRIx8 " ", eval_direct8 (sim,i + j, 0, 0));
 	    }
 	  else
 	    {
@@ -1131,14 +1114,14 @@ dump_memory (oraddr_t from, oraddr_t to)
                       line                                                   */
 /*---------------------------------------------------------------------------*/
 void
-disassemble_memory (oraddr_t from, oraddr_t to, int nl)
+disassemble_memory (or1ksim *sim,oraddr_t from, oraddr_t to, int nl)
 {
   const int INSTR_LEN = 4;
   oraddr_t i;			/* Row counter */
 
   for (i = from; i < to; i += INSTR_LEN)
     {
-      struct label_entry *entry = get_label (i);
+      struct label_entry *entry = get_label (sim, i);
 
       PRINTF ("%" PRIxADDR, i);
 
@@ -1154,17 +1137,17 @@ disassemble_memory (oraddr_t from, oraddr_t to, int nl)
 	  PRINTF (":                ");
 	}
 
-      if (verify_memoryarea (i))
+      if (verify_memoryarea (sim, i))
 	{
-	  uint32_t insn = eval_direct32 (i, 0, 0);
-	  int index = insn_decode (insn);
+	  uint32_t insn = eval_direct32 (sim,i, 0, 0);
+	  int index = insn_decode (sim, insn);
 
 	  PRINTF ("%08" PRIx32 " ", insn);
 
 	  if (index >= 0)
 	    {
-	      disassemble_insn (insn);
-	      PRINTF (" %s", disassembled);
+	      disassemble_insn (sim, insn);
+	      PRINTF (" %s", sim->disassembled);
 	    }
 	  else
 	    {
@@ -1189,12 +1172,12 @@ disassemble_memory (oraddr_t from, oraddr_t to, int nl)
 /* Closes files, etc. */
 
 void
-done_memory_table ()
+done_memory_table (or1ksim* sim)
 {
   struct dev_memarea *ptmp;
 
   /* Check list of registered devices. */
-  for (ptmp = dev_list; ptmp; ptmp = ptmp->next)
+  for (ptmp = sim->dev_list; ptmp; ptmp = ptmp->next)
     {
       if (ptmp->log)
 	fclose (ptmp->log);
@@ -1204,12 +1187,12 @@ done_memory_table ()
 /* Displays current memory configuration */
 
 void
-memory_table_status (void)
+memory_table_status (or1ksim *sim)
 {
   struct dev_memarea *ptmp;
 
   /* Check list of registered devices. */
-  for (ptmp = dev_list; ptmp; ptmp = ptmp->next)
+  for (ptmp = sim->dev_list; ptmp; ptmp = ptmp->next)
     {
       PRINTF ("addr & %" PRIxADDR " == %" PRIxADDR " to %" PRIxADDR ", size %"
 	      PRIx32 "\n", ptmp->addr_mask, ptmp->addr_compare,

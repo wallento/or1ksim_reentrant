@@ -2,6 +2,7 @@
 
    Copyright (C) 1999 Damjan Lampret, lampret@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -31,6 +32,6 @@
 #include "sim-config.h"
 
 /* Function prototype for external use */
-void  set_insnbrkpoint (oraddr_t addr);
+void  set_insnbrkpoint (or1ksim *sim, oraddr_t addr);
 
 #endif	/* TRACE__H */

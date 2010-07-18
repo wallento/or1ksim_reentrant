@@ -3,6 +3,7 @@
    
    Copyright (C) 2002 Richard Prescott <rip@step.polymtl.ca>
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -28,6 +29,8 @@
 #ifndef CHANNEL__H
 #define CHANNEL__H
 
+#include "siminstance.h"
+
 /*! A data structure representing all the functions required on a channel */
 struct channel_ops
 {
@@ -50,7 +53,7 @@ struct channel
 
 
 /* Function prototypes for external use */
-extern struct channel *channel_init (const char *descriptor);
+extern struct channel *channel_init (or1ksim *sim, const char *descriptor);
 extern int             channel_open (struct channel *channel);
 extern int             channel_read (struct channel *channel,
 				     char           *buffer,

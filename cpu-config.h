@@ -1,6 +1,7 @@
 /* cpu-config.h -- CPU configuration header file
 
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
   
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
   
@@ -26,6 +27,8 @@
 #ifndef CPU_CONFIG_H
 #define CPU_CONFIG_H
 
-extern void  reg_cpu_sec ();
+#include "siminstance.h"
+
+extern void  reg_cpu_sec (or1ksim *sim);
 
 #endif /* CPU_CONFIG_H */

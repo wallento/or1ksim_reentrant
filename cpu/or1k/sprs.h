@@ -2,6 +2,7 @@
 
    Copyright (C) 1999 Damjan Lampret, lampret@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -32,11 +33,12 @@
 
 /* Package includes */
 #include "arch.h"
+#include "siminstance.h"
 
 /* Function prototypes for external use */
-extern void      mtspr (uint16_t        regno,
+extern void      mtspr (or1ksim *sim,uint16_t        regno,
 			const uorreg_t  value);
-extern uorreg_t  mfspr (const uint16_t  regno);
+extern uorreg_t  mfspr (or1ksim *sim,const uint16_t  regno);
 extern void      sprs_status ();
 extern char     *dump_spr (uint16_t  spr,
 			   uorreg_t  spr_val);

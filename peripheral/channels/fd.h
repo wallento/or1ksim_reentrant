@@ -36,7 +36,7 @@ struct fd_channel
 };
 
 /* Global data structures */
-extern struct channel_ops  fd_channel_ops;
+extern const struct channel_ops  fd_channel_ops;
 
 /* Function prototypes for external use */
 extern int fd_read (void *data,

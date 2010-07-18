@@ -1,6 +1,7 @@
 /* toplevel-mprofile.c -- Memory Profiling Utility
 
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
   
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
   
@@ -36,15 +37,19 @@
 /* Package includes */
 #include "sim-config.h"
 #include "mprofiler.h"
+#include "toplevel-support.h"
 
+#include "siminstance.h"
 
 int  main (int   argc,
 	   char *argv[])
 {
+  or1ksim *sim = sim_instance();
   srand(getpid());
-  init_defconfig();
-  reg_config_secs();
+  init_defconfig(sim);
+  reg_config_secs(sim);
+  sim_register( sim );
 
-  exit (main_mprofiler (argc, argv, 0));
+  exit (main_mprofiler (sim, argc, argv, 0));
 
 }	/* main() */

@@ -1,7 +1,8 @@
 /* spr_dump.c -- Dump given spr in human readable form
 
-   Copyright (C) 2005 György `nog' Jeney, nog@sdf.lonestar.org
+   Copyright (C) 2005 GyÃ¶rgy `nog' Jeney, nog@sdf.lonestar.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
   
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
   
@@ -472,11 +473,8 @@ static const struct spr_def *spr_groups[] = {
  /* 09 */ spr_pic_group,
  /* 0a */ spr_tt_group };
 
-/* Should be long enough for everything */
-static char ret_spr[1000];
-
 /* Dumps the given spr in nice, human readable form */
-char *dump_spr(uint16_t spr, uorreg_t spr_val)
+char *dump_spr(or1ksim *sim, uint16_t spr, uorreg_t spr_val)
 {
   const struct spr_def *spr_def;
   uint16_t spr_in_group = spr & (MAX_SPRS_PER_GRP - 1);
@@ -496,17 +494,17 @@ char *dump_spr(uint16_t spr, uorreg_t spr_val)
   }
 
   if(spr_def->from_spr == 0xffff) {
-    sprintf(ret_spr, "Spr %"PRIx16", group %"PRIx16" = 0x%"PRIxREG"\n",
+    sprintf(sim->ret_spr, "Spr %"PRIx16", group %"PRIx16" = 0x%"PRIxREG"\n",
             spr_in_group, spr_group, spr_val);
-    return ret_spr;
+    return sim->ret_spr;
   }
 
   /* Decode the spr bits and show them in a pretty format */
   if(spr_def->from_spr == spr_def->to_spr)
-    sprintf(ret_spr, "%s", spr_def->name);
+    sprintf(sim->ret_spr, "%s", spr_def->name);
   else
-    sprintf(ret_spr, spr_def->name, spr_in_group - spr_def->from_spr);
-  strcat(ret_spr, " = ");
+    sprintf(sim->ret_spr, spr_def->name, spr_in_group - spr_def->from_spr);
+  strcat(sim->ret_spr, " = ");
 
   /* First get all the single-bit bit fields and dump them */
   for(spr_bit_def = spr_def->bits; spr_bit_def->name; spr_bit_def++) {
@@ -517,10 +515,10 @@ char *dump_spr(uint16_t spr, uorreg_t spr_val)
       continue;
 
     if(!first_bit)
-      strcat(ret_spr, " | ");
+      strcat(sim->ret_spr, " | ");
     else
       first_bit = 0;
-    strcat(ret_spr, spr_bit_def->name);
+    strcat(sim->ret_spr, spr_bit_def->name);
   }
 
   /* Now dump all the multi-bit bit fields */
@@ -528,15 +526,15 @@ char *dump_spr(uint16_t spr, uorreg_t spr_val)
     if(is_power2(spr_bit_def->mask))
       continue;
     if(!first_bit)
-      strcat(ret_spr, " | ");
+      strcat(sim->ret_spr, " | ");
     else
       first_bit = 0;
     for(tmp = spr_bit_def->mask, i = 0; !(tmp & 1); i++)
       tmp >>= 1;
 
-    sprintf(ret_spr, "%s%s = %" PRIxREG, ret_spr, spr_bit_def->name,
+    sprintf(sim->ret_spr, "%s%s = %" PRIxREG, sim->ret_spr, spr_bit_def->name,
             (spr_val >> i) & tmp);
   }
-  return ret_spr;
+  return sim->ret_spr;
 }
 

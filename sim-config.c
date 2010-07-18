@@ -2,6 +2,7 @@
 
    Copyright (C) 1999 Damjan Lampret, lampret@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
   
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
   
@@ -35,6 +36,7 @@
 #include <stdlib.h>
 
 /* Package includes */
+#include "siminstance.h"
 #include "sim-config.h"
 #include "vapi.h"
 #include "cuc.h"
@@ -65,15 +67,8 @@
 #include "argtable2.h"
 
 
-struct config config;
-struct runtime runtime;
-
-struct config_section *cur_section;
-
-struct config_section *sections = NULL;
-
 /* Forward declarations */
-static void read_script_file (const char *filename);
+static void read_script_file (or1ksim *sim, const char *filename);
 
 
 
@@ -87,164 +82,164 @@ static void read_script_file (const char *filename);
    Also set some starting values for runtime elements.                       */
 /*---------------------------------------------------------------------------*/
 void
-init_defconfig ()
+init_defconfig ( or1ksim *sim )
 {
   int  set_bits;		/* Temporaries for computing bit fields */
   int  way_bits;
 
-  memset (&config, 0, sizeof (config));
+  memset (&(sim->config), 0, sizeof (sim->config));
 
   /* External linkage disabled here. */
-  config.ext.class_ptr = NULL;
-  config.ext.read_up   = NULL;
-  config.ext.write_up  = NULL;
+  sim->config.ext.class_ptr = NULL;
+  sim->config.ext.read_up   = NULL;
+  sim->config.ext.write_up  = NULL;
 
   /* Sim */
-  config.sim.verbose        = 0;
-  config.sim.debug          = 0;
-  config.sim.profile        = 0;
-  config.sim.prof_fn        = strdup ("sim.profile");
-  config.sim.mprofile       = 0;
-  config.sim.mprof_fn       = strdup ("sim.mprofile");
-  config.sim.history        = 0;
-  config.sim.exe_log        = 0;
-  config.sim.exe_log_type   = EXE_LOG_HARDWARE;
-  config.sim.exe_log_start  = 0;
-  config.sim.exe_log_end    = 0;
-  config.sim.exe_log_marker = 0;
-  config.sim.exe_log_fn     = strdup ("executed.log");
-  config.sim.clkcycle_ps    = 4000;	/* 4000 for 4ns (250MHz) */
+  sim->config.sim.verbose        = 0;
+  sim->config.sim.debug          = 0;
+  sim->config.sim.profile        = 0;
+  sim->config.sim.prof_fn        = strdup ("sim.profile");
+  sim->config.sim.mprofile       = 0;
+  sim->config.sim.mprof_fn       = strdup ("sim.mprofile");
+  sim->config.sim.history        = 0;
+  sim->config.sim.exe_log        = 0;
+  sim->config.sim.exe_log_type   = EXE_LOG_HARDWARE;
+  sim->config.sim.exe_log_start  = 0;
+  sim->config.sim.exe_log_end    = 0;
+  sim->config.sim.exe_log_marker = 0;
+  sim->config.sim.exe_log_fn     = strdup ("executed.log");
+  sim->config.sim.clkcycle_ps    = 4000;	/* 4000 for 4ns (250MHz) */
 
   /* VAPI */
-  config.vapi.enabled        = 0;
-  config.vapi.server_port    = 50000;
-  config.vapi.log_enabled    = 0;
-  config.vapi.hide_device_id = 0;
-  config.vapi.vapi_fn        = strdup ("vapi.log");
+  sim->config.vapi.enabled        = 0;
+  sim->config.vapi.server_port    = 50000;
+  sim->config.vapi.log_enabled    = 0;
+  sim->config.vapi.hide_device_id = 0;
+  sim->config.vapi.vapi_fn        = strdup ("vapi.log");
 
   /* CUC */
-  config.cuc.calling_convention = 1;
-  config.cuc.enable_bursts      = 1;
-  config.cuc.no_multicycle      = 1;
-  config.cuc.memory_order       = MO_STRONG;
-  config.cuc.timings_fn         = strdup ("virtex.tim");
+  sim->config.cuc.calling_convention = 1;
+  sim->config.cuc.enable_bursts      = 1;
+  sim->config.cuc.no_multicycle      = 1;
+  sim->config.cuc.memory_order       = MO_STRONG;
+  sim->config.cuc.timings_fn         = strdup ("virtex.tim");
 
   /* CPU */
-  cpu_state.sprs[SPR_VR]      = 0;
-  cpu_state.sprs[SPR_UPR]     = SPR_UPR_UP | SPR_UPR_TTP;
-  cpu_state.sprs[SPR_SR]      = SPR_SR_FO  | SPR_SR_SM;
-  cpu_state.sprs[SPR_CPUCFGR] = SPR_CPUCFGR_OB32S;
-  config.cpu.superscalar      = 0;
-  config.cpu.hazards          = 0;
-  config.cpu.dependstats      = 0;
-  config.cpu.sbuf_len         = 0;
+  sim->cpu_state.sprs[SPR_VR]      = 0;
+  sim->cpu_state.sprs[SPR_UPR]     = SPR_UPR_UP | SPR_UPR_TTP;
+  sim->cpu_state.sprs[SPR_SR]      = SPR_SR_FO  | SPR_SR_SM;
+  sim->cpu_state.sprs[SPR_CPUCFGR] = SPR_CPUCFGR_OB32S;
+  sim->config.cpu.superscalar      = 0;
+  sim->config.cpu.hazards          = 0;
+  sim->config.cpu.dependstats      = 0;
+  sim->config.cpu.sbuf_len         = 0;
 
   /* Data cache (IC is set dynamically). Also set relevant SPR bits */
-  config.dc.enabled         = 0;
-  config.dc.nsets           = 1;
-  config.dc.nways           = 1;
-  config.dc.blocksize       = 1;
-  config.dc.ustates         = 2;
-  config.dc.load_hitdelay   = 2;
-  config.dc.load_missdelay  = 2;
-  config.dc.store_hitdelay  = 0;
-  config.dc.store_missdelay = 0;
+  sim->config.dc.enabled         = 0;
+  sim->config.dc.nsets           = 1;
+  sim->config.dc.nways           = 1;
+  sim->config.dc.blocksize       = 1;
+  sim->config.dc.ustates         = 2;
+  sim->config.dc.load_hitdelay   = 2;
+  sim->config.dc.load_missdelay  = 2;
+  sim->config.dc.store_hitdelay  = 0;
+  sim->config.dc.store_missdelay = 0;
 
-  if (config.dc.enabled)
+  if (sim->config.dc.enabled)
     {
-      cpu_state.sprs[SPR_UPR] |= SPR_UPR_DCP;
+	  sim->cpu_state.sprs[SPR_UPR] |= SPR_UPR_DCP;
     }
   else
     {
-      cpu_state.sprs[SPR_UPR] &= ~SPR_UPR_DCP;
+	  sim->cpu_state.sprs[SPR_UPR] &= ~SPR_UPR_DCP;
     }
 
-  set_bits = log2_int (config.dc.nsets);
-  cpu_state.sprs[SPR_DCCFGR] &= ~SPR_DCCFGR_NCS;
-  cpu_state.sprs[SPR_DCCFGR] |= set_bits << SPR_DCCFGR_NCS_OFF;
+  set_bits = log2_int (sim->config.dc.nsets);
+  sim->cpu_state.sprs[SPR_DCCFGR] &= ~SPR_DCCFGR_NCS;
+  sim->cpu_state.sprs[SPR_DCCFGR] |= set_bits << SPR_DCCFGR_NCS_OFF;
 
-  way_bits = log2_int (config.dc.nways);
-  cpu_state.sprs[SPR_DCCFGR] &= ~SPR_DCCFGR_NCW;
-  cpu_state.sprs[SPR_DCCFGR] |= way_bits << SPR_DCCFGR_NCW_OFF;
+  way_bits = log2_int (sim->config.dc.nways);
+  sim->cpu_state.sprs[SPR_DCCFGR] &= ~SPR_DCCFGR_NCW;
+  sim->cpu_state.sprs[SPR_DCCFGR] |= way_bits << SPR_DCCFGR_NCW_OFF;
 
-  if (MIN_DC_BLOCK_SIZE == config.dc.blocksize)
+  if (MIN_DC_BLOCK_SIZE == sim->config.dc.blocksize)
     {
-      cpu_state.sprs[SPR_DCCFGR] &= ~SPR_DCCFGR_CBS;
+	  sim->cpu_state.sprs[SPR_DCCFGR] &= ~SPR_DCCFGR_CBS;
     }
   else
     {
-      cpu_state.sprs[SPR_DCCFGR] |= SPR_DCCFGR_CBS;
+	  sim->cpu_state.sprs[SPR_DCCFGR] |= SPR_DCCFGR_CBS;
     }
 
   /* Power management */
-  config.pm.enabled = 0;
+  sim->config.pm.enabled = 0;
 
-  if (config.pm.enabled)
+  if (sim->config.pm.enabled)
     {
-      cpu_state.sprs[SPR_UPR] |= SPR_UPR_PMP;
+	  sim->cpu_state.sprs[SPR_UPR] |= SPR_UPR_PMP;
     }
   else
     {
-      cpu_state.sprs[SPR_UPR] &= ~SPR_UPR_PMP;
+	  sim->cpu_state.sprs[SPR_UPR] &= ~SPR_UPR_PMP;
     }
 
   /* Programmable Interrupt Controller */
-  config.pic.enabled      = 0;
-  config.pic.edge_trigger = 1;
+  sim->config.pic.enabled      = 0;
+  sim->config.pic.edge_trigger = 1;
 
-  if (config.pic.enabled)
+  if (sim->config.pic.enabled)
     {
-      cpu_state.sprs[SPR_UPR] |= SPR_UPR_PICP;
+	  sim->cpu_state.sprs[SPR_UPR] |= SPR_UPR_PICP;
     }
   else
     {
-      cpu_state.sprs[SPR_UPR] &= ~SPR_UPR_PICP;
+	  sim->cpu_state.sprs[SPR_UPR] &= ~SPR_UPR_PICP;
     }
 
   /* Branch Prediction */
-  config.bpb.enabled     = 0;
-  config.bpb.btic        = 0;
-  config.bpb.sbp_bnf_fwd = 0;
-  config.bpb.sbp_bf_fwd  = 0;
-  config.bpb.missdelay   = 0;
-  config.bpb.hitdelay    = 0;
-  
+  sim->config.bpb.enabled     = 0;
+  sim->config.bpb.btic        = 0;
+  sim->config.bpb.sbp_bnf_fwd = 0;
+  sim->config.bpb.sbp_bf_fwd  = 0;
+  sim->config.bpb.missdelay   = 0;
+  sim->config.bpb.hitdelay    = 0;
+
   /* Debug */
-  config.debug.enabled     = 0;
-  config.debug.gdb_enabled = 0;
-  config.debug.rsp_enabled = 0;
-  config.debug.server_port = 51000;
-  config.debug.rsp_port    = 51000;
-  config.debug.vapi_id     = 0;
+  sim->config.debug.enabled     = 0;
+  sim->config.debug.gdb_enabled = 0;
+  sim->config.debug.rsp_enabled = 0;
+  sim->config.debug.server_port = 51000;
+  sim->config.debug.rsp_port    = 51000;
+  sim->config.debug.vapi_id     = 0;
 
-  cpu_state.sprs[SPR_DCFGR] = SPR_DCFGR_WPCI |
-                              MATCHPOINTS_TO_NDP (MAX_MATCHPOINTS);
+  sim->cpu_state.sprs[SPR_DCFGR] = SPR_DCFGR_WPCI |
+                                   MATCHPOINTS_TO_NDP (MAX_MATCHPOINTS);
 
-  if (config.debug.enabled)
+  if (sim->config.debug.enabled)
     {
-      cpu_state.sprs[SPR_UPR] |= SPR_UPR_DUP;
+	  sim->cpu_state.sprs[SPR_UPR] |= SPR_UPR_DUP;
     }
   else
     {
-      cpu_state.sprs[SPR_UPR] &= ~SPR_UPR_DUP;
+	  sim->cpu_state.sprs[SPR_UPR] &= ~SPR_UPR_DUP;
     }
 
   /* Configure runtime */
-  memset (&runtime, 0, sizeof (runtime));
+  memset (&sim->runtime, 0, sizeof (sim->runtime));
 
   /* Sim */
-  runtime.sim.fexe_log              = NULL;
-  runtime.sim.iprompt               = 0;
-  runtime.sim.fprof                 = NULL;
-  runtime.sim.fmprof                = NULL;
-  runtime.sim.fout                  = stdout;
+  sim->runtime.sim.fexe_log              = NULL;
+  sim->runtime.sim.iprompt               = 0;
+  sim->runtime.sim.fprof                 = NULL;
+  sim->runtime.sim.fmprof                = NULL;
+  sim->runtime.sim.fout                  = stdout;
 
   /* NPC state. Set to 1 when NPC is changed while the processor is stalled. */
-  cpu_state.npc_not_valid = 0;
+  sim->cpu_state.npc_not_valid = 0;
 
   /* VAPI */
-  runtime.vapi.vapi_file = NULL;
-  runtime.vapi.enabled   = 0;
+  sim->runtime.vapi.vapi_file = NULL;
+  sim->runtime.vapi.enabled   = 0;
 
 }	/* init_defconfig() */
 
@@ -260,7 +255,7 @@ init_defconfig ()
     @return  0 on success, 1 on failure                                      */
 /*---------------------------------------------------------------------------*/
 int
-parse_args (int argc, char *argv[])
+parse_args (or1ksim *sim, int argc, char *argv[])
 {
   struct arg_lit *vercop;
   struct arg_lit *help;
@@ -352,7 +347,7 @@ parse_args (int argc, char *argv[])
 	       "Warning: No config file given, default configuration used\n");
     }
 
-  read_script_file (cfg_file->filename[0]);
+  read_script_file (sim, cfg_file->filename[0]);
 
 
   /* Remote debug server */
@@ -366,42 +361,42 @@ parse_args (int argc, char *argv[])
 	}
       else
 	{
-	  config.debug.enabled = 0;
-	  config.debug.gdb_enabled = 0;
+	  sim->config.debug.enabled = 0;
+	  sim->config.debug.gdb_enabled = 0;
 	}
     }
 
   if (srv->count > 0)
     {
-      config.debug.enabled = 1;
-      config.debug.gdb_enabled = 1;
-      config.debug.server_port = srv->ival[0];
+      sim->config.debug.enabled = 1;
+      sim->config.debug.gdb_enabled = 1;
+      sim->config.debug.server_port = srv->ival[0];
     }
 
   /* Runtime debug messages */
   if (dbg->count > 0)
     {
-      parse_dbchs (dbg->sval[0]);
+      parse_dbchs (sim, dbg->sval[0]);
     }
 
   /* Interactive operation */
-  runtime.sim.iprompt = command->count;
+  sim->runtime.sim.iprompt = command->count;
 
   /* Request for strict NPC behavior (flush the pipeline on change) */
-  config.sim.strict_npc = strict_npc->count;
+  sim->config.sim.strict_npc = strict_npc->count;
 
   /* Profiling requests */
-  config.sim.profile = profile->count;
-  config.sim.mprofile = mprofile->count;
+  sim->config.sim.profile = profile->count;
+  sim->config.sim.mprofile = mprofile->count;
 
   /* Executable file */
   if (load_file->count > 0)
     {
-      runtime.sim.filename = strdup (load_file->filename[0]);
+      sim->runtime.sim.filename = strdup (load_file->filename[0]);
     }
   else
     {
-      runtime.sim.filename = NULL;
+      sim->runtime.sim.filename = NULL;
     }
 
   arg_freetable (argtab, sizeof (argtab) / sizeof (argtab[0]));
@@ -414,37 +409,37 @@ parse_args (int argc, char *argv[])
 /*!Print the current configuration                                           */
 /*---------------------------------------------------------------------------*/
 void
-print_config ()
+print_config ( or1ksim *sim)
 {
-  if (config.sim.verbose)
+  if (sim->config.sim.verbose)
     {
       char temp[20];
       PRINTF ("Verbose on, ");
-      if (config.sim.debug)
+      if (sim->config.sim.debug)
 	PRINTF ("simdebug on, ");
       else
 	PRINTF ("simdebug off, ");
-      if (runtime.sim.iprompt)
+      if (sim->runtime.sim.iprompt)
 	PRINTF ("interactive prompt on\n");
       else
 	PRINTF ("interactive prompt off\n");
 
       PRINTF ("Machine initialization...\n");
-      generate_time_pretty (temp, config.sim.clkcycle_ps);
+      generate_time_pretty (temp, sim->config.sim.clkcycle_ps);
       PRINTF ("Clock cycle: %s\n", temp);
-      if (cpu_state.sprs[SPR_UPR] & SPR_UPR_DCP)
+      if (sim->cpu_state.sprs[SPR_UPR] & SPR_UPR_DCP)
 	PRINTF ("Data cache present.\n");
       else
 	PRINTF ("No data cache.\n");
-      if (cpu_state.sprs[SPR_UPR] & SPR_UPR_ICP)
+      if (sim->cpu_state.sprs[SPR_UPR] & SPR_UPR_ICP)
 	PRINTF ("Insn cache tag present.\n");
       else
 	PRINTF ("No instruction cache.\n");
-      if (config.bpb.enabled)
+      if (sim->config.bpb.enabled)
 	PRINTF ("BPB simulation on.\n");
       else
 	PRINTF ("BPB simulation off.\n");
-      if (config.bpb.btic)
+      if (sim->config.bpb.btic)
 	PRINTF ("BTIC simulation on.\n");
       else
 	PRINTF ("BTIC simulation off.\n");
@@ -455,24 +450,24 @@ struct config_param
 {
   char *name;
   enum param_t type;
-  void (*func) (union param_val, void *dat);
+  void (*func) (or1ksim *sim, union param_val, void *dat);
   struct config_param *next;
 };
 
 void
-base_include (union param_val val, void *dat)
+base_include (or1ksim *sim, union param_val val, void *dat)
 {
-  read_script_file (val.str_val);
-  cur_section = NULL;
+  read_script_file (sim, val.str_val);
+  sim->cur_section = NULL;
 }
 
 /*---------------------------------------------[ Simulator configuration ]---*/
 
 
 void
-sim_verbose (union param_val val, void *dat)
+sim_verbose ( or1ksim *sim, union param_val val, void *dat)
 {
-  config.sim.verbose = val.int_val;
+  sim->config.sim.verbose = val.int_val;
 }
 
 
@@ -486,72 +481,72 @@ sim_verbose (union param_val val, void *dat)
    @param[in] dat  The config data structure (not used here)                 */
 /*---------------------------------------------------------------------------*/
 void
-sim_debug (union param_val  val,
+sim_debug ( or1ksim *sim, union param_val  val,
 	   void            *dat)
 {
   if (val.int_val < 0)
     {
       fprintf (stderr,
 	       "Warning: Config debug value negative: 0 substituted\n");
-      config.sim.debug = 0;
+      sim->config.sim.debug = 0;
     }
   else if (val.int_val > 9)
     {
       fprintf (stderr,
 	       "Warning: Config debug value too large: 9 substituted\n");
-      config.sim.debug = 9;
+      sim->config.sim.debug = 9;
     }
   else
     {
-      config.sim.debug = val.int_val;
+      sim->config.sim.debug = val.int_val;
     }
 }	/* sim_debug() */
 
 
 void
-sim_profile (union param_val val, void *dat)
+sim_profile (or1ksim *sim, union param_val val, void *dat)
 {
-  config.sim.profile = val.int_val;
+  sim->config.sim.profile = val.int_val;
 }
 
 void
-sim_prof_fn (union param_val val, void *dat)
+sim_prof_fn (or1ksim *sim, union param_val val, void *dat)
 {
-  if (NULL != config.sim.prof_fn)
+  if (NULL != sim->config.sim.prof_fn)
     {
-      free (config.sim.prof_fn);
+      free (sim->config.sim.prof_fn);
     }
 
-  config.sim.prof_fn = strdup(val.str_val);
+  sim->config.sim.prof_fn = strdup(val.str_val);
 }
 
 void
-sim_mprofile (union param_val val, void *dat)
+sim_mprofile (or1ksim *sim, union param_val val, void *dat)
 {
-  config.sim.mprofile = val.int_val;
+  sim->config.sim.mprofile = val.int_val;
 }
 
 void
-sim_mprof_fn (union param_val val, void *dat)
+sim_mprof_fn (or1ksim *sim,union param_val val, void *dat)
 {
-  if (NULL != config.sim.mprof_fn)
+  if (NULL != sim->config.sim.mprof_fn)
     {
-      free (config.sim.mprof_fn);
+      free (sim->config.sim.mprof_fn);
     }
 
-  config.sim.mprof_fn = strdup (val.str_val);
+  sim->config.sim.mprof_fn = strdup (val.str_val);
 }
 
 void
-sim_history (union param_val val, void *dat)
+sim_history (or1ksim *sim,union param_val val, void *dat)
 {
-  config.sim.history = val.int_val;
+  sim->config.sim.history = val.int_val;
 }
 
 void
-sim_exe_log (union param_val val, void *dat)
+sim_exe_log (or1ksim *sim,union param_val val, void *dat)
 {
-  config.sim.exe_log = val.int_val;
+  sim->config.sim.exe_log = val.int_val;
 }
 
 /*---------------------------------------------------------------------------*/
@@ -564,24 +559,24 @@ sim_exe_log (union param_val val, void *dat)
    @param[in] dat  The config data structure (not used here)                 */
 /*---------------------------------------------------------------------------*/
 void
-sim_exe_log_type (union param_val  val,
+sim_exe_log_type (or1ksim *sim,union param_val  val,
 		  void            *dat)
 {
   if (strcasecmp (val.str_val, "default") == 0)
     {
-      config.sim.exe_log_type = EXE_LOG_HARDWARE;
+      sim->config.sim.exe_log_type = EXE_LOG_HARDWARE;
     }
   else if (strcasecmp (val.str_val, "hardware") == 0)
     {
-      config.sim.exe_log_type = EXE_LOG_HARDWARE;
+      sim->config.sim.exe_log_type = EXE_LOG_HARDWARE;
     }
   else if (strcasecmp (val.str_val, "simple") == 0)
     {
-      config.sim.exe_log_type = EXE_LOG_SIMPLE;
+      sim->config.sim.exe_log_type = EXE_LOG_SIMPLE;
     }
   else if (strcasecmp (val.str_val, "software") == 0)
     {
-      config.sim.exe_log_type = EXE_LOG_SOFTWARE;
+      sim->config.sim.exe_log_type = EXE_LOG_SOFTWARE;
     }
   else
     {
@@ -592,32 +587,32 @@ sim_exe_log_type (union param_val  val,
 
 
 void
-sim_exe_log_start (union param_val val, void *dat)
+sim_exe_log_start (or1ksim *sim,union param_val val, void *dat)
 {
-  config.sim.exe_log_start = val.longlong_val;
+  sim->config.sim.exe_log_start = val.longlong_val;
 }
 
 void
-sim_exe_log_end (union param_val val, void *dat)
+sim_exe_log_end (or1ksim *sim,union param_val val, void *dat)
 {
-  config.sim.exe_log_end = val.longlong_val;
+  sim->config.sim.exe_log_end = val.longlong_val;
 }
 
 void
-sim_exe_log_marker (union param_val val, void *dat)
+sim_exe_log_marker (or1ksim *sim,union param_val val, void *dat)
 {
-  config.sim.exe_log_marker = val.int_val;
+  sim->config.sim.exe_log_marker = val.int_val;
 }
 
 void
-sim_exe_log_fn (union param_val val, void *dat)
+sim_exe_log_fn (or1ksim *sim,union param_val val, void *dat)
 {
-  if (NULL != config.sim.exe_log_fn)
+  if (NULL != sim->config.sim.exe_log_fn)
     {
-      free (config.sim.exe_log_fn);
+      free (sim->config.sim.exe_log_fn);
     }
 
-  config.sim.exe_log_fn = strdup (val.str_val);
+  sim->config.sim.exe_log_fn = strdup (val.str_val);
 }
 
 /*---------------------------------------------------------------------------*/
@@ -631,7 +626,7 @@ sim_exe_log_fn (union param_val val, void *dat)
    @param[in] dat  The config data structure (not used here)                 */
 /*---------------------------------------------------------------------------*/
 void
-sim_clkcycle (union param_val  val,
+sim_clkcycle (or1ksim *sim,union param_val  val,
 	      void            *dat)
 {
   int len = strlen (val.str_val);
@@ -673,10 +668,9 @@ sim_clkcycle (union param_val  val,
       return;
     }
 
-  config.sim.clkcycle_ps = time;
+  sim->config.sim.clkcycle_ps = time;
 
 }	/* sim_clkcycle() */
-
 
 /*---------------------------------------------------------------------------*/
 /*!Register the functions to handle a section sim
@@ -691,9 +685,9 @@ sim_clkcycle (union param_val  val,
    the legacy names (_fn) are also present for backwards compatibility       */
 /*---------------------------------------------------------------------------*/
 static void
-reg_sim_sec ()
+reg_sim_sec (or1ksim *sim)
 {
-  struct config_section *sec = reg_config_sec ("sim", NULL, NULL);
+  struct config_section *sec = reg_config_sec (sim,"sim", NULL, NULL);
 
   reg_config_param (sec, "verbose",        paramt_int,      sim_verbose);
   reg_config_param (sec, "debug",          paramt_int,      sim_debug);
@@ -717,40 +711,40 @@ reg_sim_sec ()
 
 
 void
-reg_config_secs (void)
+reg_config_secs (or1ksim *sim)
 {
-  reg_config_param (reg_config_sec ("base", NULL, NULL), "include",
-		    paramt_str, base_include);
+  reg_config_param (reg_config_sec (sim, "base", NULL, NULL), "include",
+		    paramt_str, (void*) base_include);
 
-  reg_generic_sec ();		/* JPB */
-  reg_sim_sec ();
-  reg_cpu_sec ();
-  reg_pic_sec ();
-  reg_memory_sec ();
-  reg_mc_sec ();
-  reg_uart_sec ();
-  reg_dma_sec ();
-  reg_debug_sec ();
-  reg_vapi_sec ();
-  reg_ethernet_sec ();
-  reg_immu_sec ();
-  reg_dmmu_sec ();
-  reg_ic_sec ();
-  reg_dc_sec ();
-  reg_gpio_sec ();
-  reg_bpb_sec ();
-  reg_pm_sec ();
-  reg_vga_sec ();
-  reg_fb_sec ();
-  reg_kbd_sec ();
-  reg_ata_sec ();
-  reg_cuc_sec ();
+  reg_generic_sec (sim);		/* JPB */
+  reg_sim_sec (sim);
+  reg_cpu_sec (sim);
+  reg_pic_sec (sim);
+  reg_memory_sec (sim);
+  reg_mc_sec (sim);
+  reg_uart_sec (sim);
+  reg_dma_sec (sim);
+  reg_debug_sec (sim);
+  reg_vapi_sec (sim);
+  reg_ethernet_sec (sim);
+  reg_immu_sec (sim);
+  reg_dmmu_sec (sim);
+  reg_ic_sec (sim);
+  reg_dc_sec (sim);
+  reg_gpio_sec (sim);
+  reg_bpb_sec (sim);
+  reg_pm_sec (sim);
+  reg_vga_sec (sim);
+  reg_fb_sec (sim);
+  reg_kbd_sec (sim);
+  reg_ata_sec (sim);
+  reg_cuc_sec (sim);
 }
 
 void
 reg_config_param (struct config_section *sec, const char *param,
 		  enum param_t type,
-		  void (*param_cb) (union param_val, void *))
+		  void (*param_cb) (or1ksim *sim, union param_val, void *))
 {
   struct config_param *new = malloc (sizeof (struct config_param));
 
@@ -774,8 +768,8 @@ reg_config_param (struct config_section *sec, const char *param,
 }
 
 struct config_section *
-reg_config_sec (const char *section,
-		void *(*sec_start) (void), void (*sec_end) (void *))
+reg_config_sec (or1ksim *sim, const char *section,
+		void *(*sec_start) (or1ksim *sim), void (*sec_end) (or1ksim *sim, void *))
 {
   struct config_section *new = malloc (sizeof (struct config_section));
 
@@ -791,18 +785,18 @@ reg_config_sec (const char *section,
       exit (1);
     }
 
-  new->next = sections;
+  new->next = sim->sections;
   new->sec_start = sec_start;
   new->sec_end = sec_end;
   new->params = NULL;
 
-  sections = new;
+  sim->sections = new;
 
   return new;
 }
 
 static void
-switch_param (char *param, struct config_param *cur_param)
+switch_param (or1ksim *sim, char *param, struct config_param *cur_param)
 {
   char *end_p;
   union param_val val;
@@ -852,7 +846,7 @@ switch_param (char *param, struct config_param *cur_param)
       break;
     }
 
-  cur_param->func (val, cur_section->dat);
+  cur_param->func (sim, val, sim->cur_section->dat);
 }
 
 /* Read environment from a script file. Does not fail - assumes default configuration instead.
@@ -862,29 +856,29 @@ switch_param (char *param, struct config_param *cur_param)
      data
      param = value
    end
-   
+
    Example:
    section mc
      memory_table_file = sim.mem
      enable = 1
      POC = 0x47892344
    end
-   
+
  */
 
 static void
-read_script_file (const char *filename)
+read_script_file (or1ksim *sim, const char *filename)
 {
   FILE *f;
   char *home = getenv ("HOME");
   char ctmp[STR_SIZE];
   int local = 1;
-  cur_section = NULL;
+  sim->cur_section = NULL;
 
   sprintf (ctmp, "%s/.or1k/%s", home, filename);
   if ((f = fopen (filename, "rt")) || (home && (f = fopen (ctmp, "rt"))))
     {
-      if (config.sim.verbose)
+      if (sim->config.sim.verbose)
 	PRINTF ("Reading script file from '%s'...\n",
 		local ? filename : ctmp);
 
@@ -897,17 +891,17 @@ read_script_file (const char *filename)
 	  if (strcmp (param, "section") == 0)
 	    {
 	      struct config_section *cur;
-	      cur_section = NULL;
+	      sim->cur_section = NULL;
 	      if (fscanf (f, "%s\n", param) != 1)
 		{
 		  fprintf (stderr, "%s: ERROR: Section name required.\n",
 			   local ? filename : ctmp);
 		  exit (1);
 		}
-	      for (cur = sections; cur; cur = cur->next)
+	      for (cur = sim->sections; cur; cur = cur->next)
 		if (strcmp (cur->name, param) == 0)
 		  {
-		    cur_section = cur;
+		    sim->cur_section = cur;
 		    break;
 		  }
 	      if (!cur)
@@ -923,14 +917,14 @@ read_script_file (const char *filename)
 		{
 		  cur->dat = NULL;
 		  if (cur->sec_start)
-		    cur->dat = cur->sec_start ();
+		    cur->dat = cur->sec_start (sim);
 		}
 	    }
 	  else if (strcmp (param, "end") == 0)
 	    {
-	      if (cur_section->sec_end)
-		cur_section->sec_end (cur_section->dat);
-	      cur_section = NULL;
+	      if (sim->cur_section->sec_end)
+		sim->cur_section->sec_end (sim, sim->cur_section->dat);
+	      sim->cur_section = NULL;
 	    }
 	  else if (strncmp (param, "/*", 2) == 0)
 	    {
@@ -951,7 +945,7 @@ read_script_file (const char *filename)
 	    {
 	      struct config_param *cur_param;
 	      char *cur_p;
-	      for (cur_param = cur_section->params; cur_param;
+	      for (cur_param = sim->cur_section->params; cur_param;
 		   cur_param = cur_param->next)
 		if (strcmp (cur_param->name, param) == 0)
 		  {
@@ -974,12 +968,12 @@ read_script_file (const char *filename)
 	      while (*cur_p && isspace (*cur_p))
 		cur_p++;
 
-	      switch_param (cur_p, cur_param);
+	      switch_param (sim, cur_p, cur_param);
 	    }
 	}
       fclose (f);
     }
-  else if (config.sim.verbose)
+  else if (sim->config.sim.verbose)
     fprintf (stderr,
 	     "Warning: Cannot read script file from '%s' of '%s'.\n",
 	     filename, ctmp);
@@ -987,7 +981,7 @@ read_script_file (const char *filename)
 
 /* Utility for execution of set sim command.  */
 static int
-set_config (int argc, char **argv)
+set_config (or1ksim *sim, int argc, char **argv)
 {
   struct config_section *cur;
   struct config_param *cur_param;
@@ -996,15 +990,15 @@ set_config (int argc, char **argv)
     return 1;
 
   PRINTF ("sec:%s\n", argv[1]);
-  cur_section = NULL;
-  for (cur = sections; cur; cur = cur->next)
+  sim->cur_section = NULL;
+  for (cur = sim->sections; cur; cur = cur->next)
     if (strcmp (cur->name, argv[1]) == 0)
       {
-	cur_section = cur;
+	sim->cur_section = cur;
 	break;
       }
 
-  if (!cur_section)
+  if (!sim->cur_section)
     return 1;
 
   if (argc < 3)
@@ -1028,31 +1022,31 @@ set_config (int argc, char **argv)
 	PRINTF ("params:%s\n", argv[3]);
       }
 
-    switch_param (argv[3], cur_param);
+    switch_param (sim, argv[3], cur_param);
   }
   return 0;
 }
 
 /* Executes set sim command, displays error.  */
 void
-set_config_command (int argc, char **argv)
+set_config_command (or1ksim *sim, int argc, char **argv)
 {
   struct config_section *cur;
   struct config_param *cur_param;
 
-  switch (set_config (argc, argv))
+  switch (set_config (sim, argc, argv))
     {
     case 1:
       PRINTF
 	("Invalid or missing section name.  One of valid sections must be specified:\n");
-      for (cur = sections; cur; cur = cur->next)
+      for (cur = sim->sections; cur; cur = cur->next)
 	PRINTF ("%s ", cur->name);
       PRINTF ("\n");
       break;
     case 2:
       PRINTF
 	("Invalid or missing item name.  One of valid items must be specified:\n");
-      for (cur_param = cur_section->params; cur_param;
+      for (cur_param = sim->cur_section->params; cur_param;
 	   cur_param = cur_param->next)
 	PRINTF ("%s ", cur_param->name);
       PRINTF ("\n");

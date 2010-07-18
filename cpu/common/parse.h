@@ -2,6 +2,7 @@
 
    Copyright (C) 1999 Damjan Lampret, lampret@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -29,12 +30,13 @@
 
 /* Package includes */
 #include "sim-config.h"
-  
+#include "siminstance.h"
+
 /* Function prototypes for external use */
 char     *strstrip (char       *dst,
 		    const char *src,
 		    int         n);
-uint32_t  loadcode (char     *filename,
+uint32_t  loadcode (or1ksim *sim,char     *filename,
 		    oraddr_t  startaddr,
 		    oraddr_t  virtphy_transl);
 

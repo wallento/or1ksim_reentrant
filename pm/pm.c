@@ -2,6 +2,7 @@
 
    Copyright (C) 1999 Damjan Lampret, lampret@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
   
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
   
@@ -32,21 +33,20 @@
 #include "execute.h"
 #include "sim-config.h"
 
-
 /*---------------------------------------------------------------------------*/
 /*!Reset power management
 
    Initializes PMR register by clearing it.                                  */
 /*---------------------------------------------------------------------------*/
 void
-pm_reset ()
+pm_reset (or1ksim *sim)
 {
-  if (config.sim.verbose)
+  if (sim->config.sim.verbose)
     {
       PRINTF ("Resetting Power Management.\n");
     }
 
-  cpu_state.sprs[SPR_PMR] = 0;
+  sim->cpu_state.sprs[SPR_PMR] = 0;
 
 }				/* pm_reset() */
 
@@ -60,18 +60,18 @@ pm_reset ()
    @param[in] dat  The config data structure (not used here)                 */
 /*---------------------------------------------------------------------------*/
 static void
-pm_enabled (union param_val val, void *dat)
+pm_enabled (or1ksim *sim,union param_val val, void *dat)
 {
   if (val.int_val)
     {
-      cpu_state.sprs[SPR_UPR] |= SPR_UPR_PMP;
+      sim->cpu_state.sprs[SPR_UPR] |= SPR_UPR_PMP;
     }
   else
     {
-      cpu_state.sprs[SPR_UPR] &= ~SPR_UPR_PMP;
+      sim->cpu_state.sprs[SPR_UPR] &= ~SPR_UPR_PMP;
     }
 
-  config.pm.enabled = val.int_val;
+  sim->config.pm.enabled = val.int_val;
 
 }				/* pm_enabled() */
 
@@ -80,9 +80,9 @@ pm_enabled (union param_val val, void *dat)
 /*!Set up a new power management configuration section                       */
 /*---------------------------------------------------------------------------*/
 void
-reg_pm_sec ()
+reg_pm_sec (or1ksim *sim)
 {
-  struct config_section *sec = reg_config_sec ("pm", NULL, NULL);
+  struct config_section *sec = reg_config_sec (sim, "pm", NULL, NULL);
 
   reg_config_param (sec, "enabled", paramt_int, pm_enabled);
 

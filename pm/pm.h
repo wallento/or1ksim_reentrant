@@ -2,6 +2,7 @@
 
    Copyright (C) 2000 Damjan Lampret, lampret@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -27,7 +28,7 @@
 #define PM__H
 
 /* Function prototypes for external use */
-extern void  pm_reset ();
-extern void  reg_pm_sec ();
+extern void  pm_reset (or1ksim *sim);
+extern void  reg_pm_sec (or1ksim *sim);
 
 #endif	/* PM__H */

@@ -2,6 +2,7 @@
 
    Copyright (C) 2002 Marko Mlinar, markom@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -28,6 +29,6 @@
 #define PS2KBD__H
 
 /* Prototypes for external use */
-void  reg_kbd_sec ();
+void  reg_kbd_sec (or1ksim *sim);
 
 #endif /* PS2KBD__H */

@@ -1,5 +1,6 @@
 /* adv.c -- OpenRISC Custom Unit Compiler, Advanced Optimizations
  *    Copyright (C) 2002 Marko Mlinar, markom@opencores.org
+ *    Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
  *
  *    This file is part of OpenRISC 1000 Architectural Simulator.
  *
@@ -52,7 +53,7 @@ static unsigned long mask (unsigned long c)
 }
 
 /* Calculates facts, that are determined by conditionals */
-void insert_conditional_facts (cuc_func *f)
+void insert_conditional_facts (or1ksim *sim, cuc_func *f)
 {
   int b, j;
   int b1, i1, j1;
@@ -85,7 +86,7 @@ void insert_conditional_facts (cuc_func *f)
         n[j].opt[3] = OPT_NONE;
         sprintf (n[j].disasm, "conditional %s fact", j ? "false" : "true");
       }
-      
+
       /* First get the conditional and two instruction to place after the current BB */
       switch (f->INSN(ii->op[1]).index) {
         case II_SFEQ:
@@ -170,7 +171,7 @@ void insert_conditional_facts (cuc_func *f)
           f->bb[nb].selected_tim = -1;
         }
         for (b1 = 0; b1 < f->num_bb; b1++) f->bb[b1].tmp = 0;
- 
+
         /* Find successor blocks and change links accordingly */
         mark_successors (f, f->num_bb - 2, 2, b);
         mark_successors (f, f->num_bb - 1, 1, b);
@@ -183,7 +184,7 @@ void insert_conditional_facts (cuc_func *f)
               if (f->bb[b1].insn[i1].opt[j1] & OPT_REF && f->bb[b1].insn[i1].op[j1] == rref)
                 f->bb[b1].insn[i1].op[j1] = REF (f->num_bb - f->bb[b1].tmp, 0);
         }
-        if (cuc_debug >= 3) print_cuc_bb (f, "FACT");
+        if (sim->cuc_debug >= 3) print_cuc_bb (sim, f, "FACT");
       }
     }
   }
@@ -247,7 +248,7 @@ static unsigned long calc_max (cuc_func *f, int ref)
    approaching final solution. This algorithm is surely finite,
    but can be very slow; so we stop after some iterations;
    normal loops should be in this range */
-void detect_max_values (cuc_func *f)
+void detect_max_values (or1ksim *sim, cuc_func *f)
 {
   int b, i;
   int modified = 0;

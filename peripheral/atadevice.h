@@ -2,6 +2,7 @@
 
    Copyright (C) 2002 Richard Herveille, rherveille@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -35,6 +36,8 @@
 
 /* System includes */
 #include <stdio.h>
+
+#include "siminstance.h"
 
 /* --- Register definitions --- */
 /* ----- ATA Registers                                                */
@@ -151,7 +154,7 @@ struct ata_device
     /* Number of sectors still needing to be read         */
     int nr_sect;
     /* function to call when block of data has been transfered */
-    void (*end_t_func) (struct ata_device *);
+    void (*end_t_func) (or1ksim* sim, struct ata_device *);
   } internals;
 
 
@@ -212,7 +215,7 @@ struct ata_devices
 /* all devices                                                        */
 void ata_devices_init (struct ata_devices *devices);
 void ata_devices_hw_reset (struct ata_devices *devices, int reset_signal);
-short ata_devices_read (struct ata_devices *devices, char adr);
-void ata_devices_write (struct ata_devices *devices, char adr, short value);
+short ata_devices_read (or1ksim *sim, struct ata_devices *devices, char adr);
+void ata_devices_write (or1ksim *sim, struct ata_devices *devices, char adr, short value);
 
 #endif	/* ATADEVICE__H */

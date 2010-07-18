@@ -27,6 +27,6 @@
 #define FILE__H
 
 /* Global data structures for external use */
-extern struct channel_ops  file_channel_ops;
+extern const struct channel_ops  file_channel_ops;
 
 #endif  /* FILE__H */

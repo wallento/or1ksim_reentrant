@@ -2,6 +2,7 @@
 
    Copyright (C) 1999 Damjan Lampret, lampret@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -40,33 +41,12 @@
 #include "coff.h"
 #include "elf.h"
 #include "labels.h"
+#include "siminstance.h"
 
 
-DECLARE_DEBUG_CHANNEL (coff)
+//wallento: DECLARE_DEBUG_CHANNEL (coff)
 
 #define MEMORY_LEN  0x100000000ULL
-
-/*!Whether to do immediate statistics. This seems to be for local debugging
-   of parse.c */
-#define IMM_STATS 0
-
-/*!Unused mem memory marker. It is used when allocating program and data
-   memory during parsing */
-static unsigned int  freemem;
-
-/*!Translation table provided by microkernel. Only used if simulating
-   microkernel. */
-static oraddr_t  transl_table;
-
-/*!Used to signal whether during loading of programs a translation fault
-   occured. */
-static uint32_t  transl_error;
-
-#if IMM_STATS
-static int       bcnt[33][3] = { 0 };
-static int       bsum[3]     = { 0 };
-static uint32_t  movhi       = 0;
-#endif  /* IMM_STATS */
 
 /*---------------------------------------------------------------------------*/
 /*!Copy a string with null termination
@@ -107,13 +87,13 @@ strstrip (char       *dst,
    @return  The physical address                                             */
 /*---------------------------------------------------------------------------*/
 static oraddr_t
-translate (oraddr_t  laddr,
+translate (or1ksim* sim,oraddr_t  laddr,
 	   int      *breakpoint)
 {
   int i;
 
   /* No translation (i.e. when loading kernel into simulator) */
-  if (transl_table == 0)
+  if (sim->transl_table == 0)
     {
       return laddr;
     }
@@ -121,14 +101,14 @@ translate (oraddr_t  laddr,
   /* Try to find our translation in the table. */
   for (i = 0; i < (MEMORY_LEN / PAGE_SIZE) * 16; i += 16)
     {
-      if ((laddr & ~(PAGE_SIZE - 1)) == eval_direct32 (transl_table + i, 0, 0))
+      if ((laddr & ~(PAGE_SIZE - 1)) == eval_direct32 (sim,sim->transl_table + i, 0, 0))
 	{
 	  /* Page modified */
-	  set_direct32 (transl_table + i + 8, -2, 0, 0);
+	  set_direct32 (sim,sim->transl_table + i + 8, -2, 0, 0);
 	  PRINTF ("found paddr=%" PRIx32 "\n",
-		  eval_direct32 (transl_table + i + 4, 0, 0) |
+		  eval_direct32 (sim,sim->transl_table + i + 4, 0, 0) |
 		  (laddr & (PAGE_SIZE - 1)));
-	  return  (oraddr_t) eval_direct32 (transl_table + i + 4, 0, 0) |
+	  return  (oraddr_t) eval_direct32 (sim,sim->transl_table + i + 4, 0, 0) |
 	          (laddr & (oraddr_t) (PAGE_SIZE - 1));
 	}
     }
@@ -136,30 +116,30 @@ translate (oraddr_t  laddr,
   /* Allocate new phy page for us. */
   for (i = 0; i < (MEMORY_LEN / PAGE_SIZE) * 16; i += 16)
     {
-      if (eval_direct32 (transl_table + i + 8, 0, 0) == 0)
+      if (eval_direct32 (sim,sim->transl_table + i + 8, 0, 0) == 0)
 	{
 	  /* VPN */
-	  set_direct32 (transl_table + i, laddr & ~(PAGE_SIZE - 1), 0, 0);
+	  set_direct32 (sim,sim->transl_table + i, laddr & ~(PAGE_SIZE - 1), 0, 0);
 	  /* PPN */
-	  set_direct32 (transl_table + i + 4, (i / 16) * PAGE_SIZE, 0, 0);
+	  set_direct32 (sim,sim->transl_table + i + 4, (i / 16) * PAGE_SIZE, 0, 0);
 	  /* Page modified */
-	  set_direct32 (transl_table + i + 8, -2, 0, 0);
+	  set_direct32 (sim,sim->transl_table + i + 8, -2, 0, 0);
 	  PRINTF ("newly allocated ppn=%" PRIx32 "\n",
-		  eval_direct32 (transl_table + i + 4, 0, 0));
-	  PRINTF ("newly allocated .ppn=%" PRIxADDR "\n", transl_table + i + 4);
+		  eval_direct32 (sim,sim->transl_table + i + 4, 0, 0));
+	  PRINTF ("newly allocated .ppn=%" PRIxADDR "\n", sim->transl_table + i + 4);
 	  PRINTF ("newly allocated ofs=%" PRIxADDR "\n",
 		  (laddr & (PAGE_SIZE - 1)));
 	  PRINTF ("newly allocated paddr=%" PRIx32 "\n",
-		  eval_direct32 (transl_table + i + 4, 0,
+		  eval_direct32 (sim,sim->transl_table + i + 4, 0,
 				 0) | (laddr & (PAGE_SIZE - 1)));
-	  return  (oraddr_t) eval_direct32 (transl_table + i + 4, 0, 0) |
+	  return  (oraddr_t) eval_direct32 (sim,sim->transl_table + i + 4, 0, 0) |
 	          (laddr & (oraddr_t) (PAGE_SIZE - 1));
 	}
     }
 
   /* If we come this far then all phy memory is used and we can't find our
      page nor allocate new page. */
-  transl_error = 1;
+  sim->transl_error = 1;
   PRINTF ("can't translate %" PRIxADDR "\n", laddr);
   exit (1);
 
@@ -281,27 +261,27 @@ check_insn (uint32_t insn)
                          which also does not use it.                         */
 /*---------------------------------------------------------------------------*/
 static void
-addprogram (oraddr_t  address,
+addprogram (or1ksim *sim,oraddr_t  address,
 	    uint32_t  insn,
 	    int      *breakpoint)
 {
-  int vaddr = (!runtime.sim.filename) ? translate (address, breakpoint) :
-                                        translate (freemem, breakpoint);
+  int vaddr = (!sim->runtime.sim.filename) ? translate (sim,address, breakpoint) :
+                                        translate (sim,sim->freemem, breakpoint);
 
   /* We can't have set_program32 functions since it is not gauranteed that the
      section we're loading is aligned on a 4-byte boundry */
-  set_program8 (vaddr, (insn >> 24) & 0xff);
-  set_program8 (vaddr + 1, (insn >> 16) & 0xff);
-  set_program8 (vaddr + 2, (insn >> 8) & 0xff);
-  set_program8 (vaddr + 3, insn & 0xff);
+  set_program8 (sim, vaddr, (insn >> 24) & 0xff);
+  set_program8 (sim, vaddr + 1, (insn >> 16) & 0xff);
+  set_program8 (sim, vaddr + 2, (insn >> 8) & 0xff);
+  set_program8 (sim, vaddr + 3, insn & 0xff);
 
 #if IMM_STATS
   check_insn (insn);
 #endif
 
-  if (runtime.sim.filename)
+  if (sim->runtime.sim.filename)
     {
-      freemem += insn_len (insn_decode (insn));
+      sim->freemem += insn_len (insn_decode (sim, insn));
     }
 }	/* addprogram () */
 
@@ -313,7 +293,7 @@ addprogram (oraddr_t  address,
    @param[in] sections  Number of sections in file                           */
 /*---------------------------------------------------------------------------*/
 static void
-readfile_coff (char  *filename,
+readfile_coff (or1ksim *sim,char  *filename,
 	       short  sections)
 {
   FILE *inputfs;
@@ -373,7 +353,7 @@ readfile_coff (char  *filename,
       ++firstthree;
 
       /* loading section */
-      freemem = COFF_LONG_H (coffscnhdr.s_paddr);
+      sim->freemem = COFF_LONG_H (coffscnhdr.s_paddr);
       if (fseek (inputfs, COFF_LONG_H (coffscnhdr.s_scnptr), SEEK_SET) == -1)
 	{
 	  fclose (inputfs);
@@ -384,13 +364,13 @@ readfile_coff (char  *filename,
 	     && (len = fread (&inputbuf, sizeof (inputbuf), 1, inputfs)))
 	{
 	  insn = COFF_LONG_H (inputbuf);
-	  len = insn_len (insn_decode (insn));
+	  len = insn_len (insn_decode (sim, insn));
 	  if (len == 2)
 	    {
 	      fseek (inputfs, -2, SEEK_CUR);
 	    }
 
-	  addprogram (freemem, insn, &breakpoint);
+	  addprogram (sim,sim->freemem, insn, &breakpoint);
 	  sectsize -= len;
 	}
     }
@@ -416,7 +396,7 @@ readfile_coff (char  *filename,
 /* Load symbols from big-endian COFF file. */
 
 static void
-readsyms_coff (char *filename, uint32_t symptr, uint32_t syms)
+readsyms_coff (or1ksim *sim, char *filename, uint32_t symptr, uint32_t syms)
 {
   FILE *inputfs;
   struct COFF_syment coffsymhdr;
@@ -456,7 +436,7 @@ readsyms_coff (char *filename, uint32_t symptr, uint32_t syms)
 	    {
 	      if (strlen (coffsymhdr.e.e_name)
 		  && strlen (coffsymhdr.e.e_name) < 9)
-		add_label (COFF_LONG_H (coffsymhdr.e_value),
+		add_label (sim, COFF_LONG_H (coffsymhdr.e_value),
 			   coffsymhdr.e.e_name);
 	    }
 	  else
@@ -473,7 +453,7 @@ readsyms_coff (char *filename, uint32_t symptr, uint32_t syms)
 		    if ((*(s++) = fgetc (inputfs)) == 0)
 		      break;
 		  tmp[32] = 0;
-		  add_label (COFF_LONG_H (coffsymhdr.e_value), &tmp[0]);
+		  add_label (sim, COFF_LONG_H (coffsymhdr.e_value), &tmp[0]);
 		}
 	      fseek (inputfs, fpos, SEEK_SET);
 	    }
@@ -496,7 +476,7 @@ readsyms_coff (char *filename, uint32_t symptr, uint32_t syms)
 }
 
 static void
-readfile_elf (char *filename)
+readfile_elf (or1ksim *sim,char *filename)
 {
 
   FILE *inputfs;
@@ -701,7 +681,7 @@ readfile_elf (char *filename)
 	  PRINTF (" offset: 0x%.8lx,", ELF_LONG_H (elf_spnt->sh_offset));
 	  PRINTF (" size: 0x%.8lx\n", ELF_LONG_H (elf_spnt->sh_size));
 
-	  freemem = padd;
+	  sim->freemem = padd;
 	  sectsize = ELF_LONG_H (elf_spnt->sh_size);
 
 	  if (fseek (inputfs, ELF_LONG_H (elf_spnt->sh_offset), SEEK_SET) !=
@@ -716,7 +696,7 @@ readfile_elf (char *filename)
 		 && (len = fread (&inputbuf, sizeof (inputbuf), 1, inputfs)))
 	    {
 	      insn = ELF_LONG_H (inputbuf);
-	      addprogram (freemem, insn, &breakpoint);
+	      addprogram (sim,sim->freemem, insn, &breakpoint);
 	      sectsize -= 4;
 	    }
 	}
@@ -730,7 +710,7 @@ readfile_elf (char *filename)
 	  if (sym_tbl[i].st_name && sym_tbl[i].st_info
 	      && ELF_SHORT_H (sym_tbl[i].st_shndx) < 0x8000)
 	    {
-	      add_label (ELF_LONG_H (sym_tbl[i].st_value),
+	      add_label (sim, ELF_LONG_H (sym_tbl[i].st_value),
 			 &str_tbl[ELF_LONG_H (sym_tbl[i].st_name)]);
 	    }
 	  i++;
@@ -757,7 +737,7 @@ readfile_elf (char *filename)
 handles orX-coff-big executables at the moment. */
 
 static void
-identifyfile (char *filename)
+identifyfile (or1ksim *sim,char *filename)
 {
   FILE *inputfs;
   struct COFF_filehdr coffhdr;
@@ -792,8 +772,8 @@ identifyfile (char *filename)
 	      exit (1);
 	    }
 	  fclose (inputfs);
-	  readfile_coff (filename, COFF_SHORT_H (coffhdr.f_nscns));
-	  readsyms_coff (filename, COFF_LONG_H (coffhdr.f_symptr),
+	  readfile_coff (sim,filename, COFF_SHORT_H (coffhdr.f_nscns));
+	  readsyms_coff (sim,filename, COFF_LONG_H (coffhdr.f_symptr),
 			 COFF_LONG_H (coffhdr.f_nsyms));
 	  return;
 	}
@@ -818,7 +798,7 @@ identifyfile (char *filename)
 	      exit (1);
 	    }
 	  fclose (inputfs);
-	  readfile_elf (filename);
+	  readfile_elf (sim,filename);
 	  return;
 	}
       else
@@ -849,16 +829,16 @@ identifyfile (char *filename)
    @return  zero on success, negative on failure.                            */
 /*---------------------------------------------------------------------------*/
 uint32_t
-loadcode (char *filename, oraddr_t startaddr, oraddr_t virtphy_transl)
+loadcode (or1ksim *sim,char *filename, oraddr_t startaddr, oraddr_t virtphy_transl)
 {
   int breakpoint = 0;
 
-  transl_error = 0;
-  transl_table = virtphy_transl;
-  freemem      = startaddr;
+  sim->transl_error = 0;
+  sim->transl_table = virtphy_transl;
+  sim->freemem      = startaddr;
   PRINTF ("loadcode: filename %s  startaddr=%" PRIxADDR "  virtphy_transl=%"
 	  PRIxADDR "\n", filename, startaddr, virtphy_transl);
-  identifyfile (filename);
+  identifyfile (sim,filename);
 
 #if IMM_STATS
   {
@@ -875,9 +855,9 @@ loadcode (char *filename, oraddr_t startaddr, oraddr_t virtphy_transl)
   }
 #endif
 
-  if (transl_error)
+  if (sim->transl_error)
     return -1;
   else
-    return translate (freemem, &breakpoint);
+    return translate (sim,sim->freemem, &breakpoint);
 
 }

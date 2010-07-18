@@ -2,6 +2,7 @@
 
    Copyright (C) 2001 by Marko Mlinar, markom@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -69,7 +70,7 @@
 /* CSC register field definition */
 #define MC_CSC_EN_OFFSET	  0
 #define MC_CSC_MEMTYPE_OFFSET	  1
-#define MC_CSC_MEMTYPE_WIDTH	  2 
+#define MC_CSC_MEMTYPE_WIDTH	  2
 #define MC_CSC_BW_OFFSET	  4
 #define MC_CSC_BW_WIDTH		  2
 #define MC_CSC_MS_OFFSET	  6
@@ -125,7 +126,7 @@
 #define MC_TMS_ASYNC_TRDZ_WIDTH		 4
 #define MC_TMS_ASYNC_TRDV_OFFSET	 0
 #define MC_TMS_ASYNC_TRDV_WIDTH		 8
- 
+
 /* TMS register field definition SYNC  */
 #define MC_TMS_SYNC_TTO_OFFSET		16
 #define MC_TMS_SYNC_TTO_WIDTH		 9
@@ -162,12 +163,6 @@ struct mc
 
   struct mc *next;
 };
-
-static struct mc *mcs = NULL;
-
-/* List used to temporarily hold memory areas registered with the mc, while the
- * mc configureation has not been loaded */
-static struct mc_area *mc_areas = NULL;
 
 void
 set_csc_tms (int cs, uint32_t csc, uint32_t tms, struct mc *mc)
@@ -215,7 +210,7 @@ set_csc_tms (int cs, uint32_t csc, uint32_t tms, struct mc *mc)
 
 /* Set a specific MC register with value. */
 void
-mc_write_word (oraddr_t addr, uint32_t value, void *dat)
+mc_write_word (or1ksim *sim, oraddr_t addr, uint32_t value, void *dat)
 {
   struct mc *mc = dat;
   int chipsel;
@@ -250,7 +245,7 @@ mc_write_word (oraddr_t addr, uint32_t value, void *dat)
 
 /* Read a specific MC register. */
 uint32_t
-mc_read_word (oraddr_t addr, void *dat)
+mc_read_word (or1ksim *sim, oraddr_t addr, void *dat)
 {
   struct mc *mc = dat;
   uint32_t value = 0;
@@ -283,7 +278,7 @@ mc_read_word (oraddr_t addr, void *dat)
 
 /* Read POC register and init memory controler regs. */
 void
-mc_reset (void *dat)
+mc_reset (or1ksim *sim, void *dat)
 {
   struct mc *mc = dat;
   struct mc_area *cur, *prev, *tmp;
@@ -324,7 +319,7 @@ mc_reset (void *dat)
     }
 
   /* Grab control over all the devices we are destined to control */
-  cur = mc_areas;
+  cur = sim->mc_areas;
   prev = NULL;
   while (cur)
     {
@@ -333,7 +328,7 @@ mc_reset (void *dat)
 	  if (prev)
 	    prev->next = cur->next;
 	  else
-	    mc_areas = cur->next;
+	    sim->mc_areas = cur->next;
 	  prev = cur;
 	  tmp = cur->next;
 	  cur->next = mc->mc_areas;
@@ -357,20 +352,20 @@ mc_reset (void *dat)
 /*!Free all allocated memory                                                 */
 /*---------------------------------------------------------------------------*/
 void
-mc_done ()
+mc_done (or1ksim *sim)
 {
-  while (NULL != mc_areas)
+  while (NULL != sim->mc_areas)
     {
-      struct mc_area *next = mc_areas->next;
+      struct mc_area *next = sim->mc_areas->next;
 
-      free (mc_areas);
-      mc_areas = next;
+      free (sim->mc_areas);
+      sim->mc_areas = next;
     }
 }	/* mc_done () */
 
 
 void
-mc_status (void *dat)
+mc_status (or1ksim *sim, void *dat)
 {
   struct mc *mc = dat;
   int i;
@@ -390,7 +385,7 @@ mc_status (void *dat)
 /*--------------------------------------------[ Peripheral<->MC interface ]---*/
 /* Registers some memory to be under the memory controllers control */
 void
-mc_reg_mem_area (struct dev_memarea *mem, unsigned int cs, int mc)
+mc_reg_mem_area (or1ksim *sim, struct dev_memarea *mem, unsigned int cs, int mc)
 {
   struct mc_area *new = malloc (sizeof (struct mc_area));
 
@@ -404,21 +399,21 @@ mc_reg_mem_area (struct dev_memarea *mem, unsigned int cs, int mc)
   new->mem  = mem;
   new->mc   = mc;
 
-  new->next = mc_areas;
+  new->next = sim->mc_areas;
 
-  mc_areas  = new;
+  sim->mc_areas  = new;
 }
 
 /*-----------------------------------------------------[ MC configuration ]---*/
 static void
-mc_enabled (union param_val val, void *dat)
+mc_enabled (or1ksim *sim,union param_val val, void *dat)
 {
   struct mc *mc = dat;
   mc->enabled = val.int_val;
 }
 
 static void
-mc_baseaddr (union param_val val, void *dat)
+mc_baseaddr (or1ksim *sim,union param_val val, void *dat)
 {
   struct mc *mc = dat;
   mc->baseaddr = val.addr_val;
@@ -435,7 +430,7 @@ mc_baseaddr (union param_val val, void *dat)
    @param[in] dat  The config data structure                                 */
 /*---------------------------------------------------------------------------*/
 static void
-mc_poc (union param_val  val,
+mc_poc (or1ksim *sim,union param_val  val,
 	void            *dat)
 {
   struct mc *mc = dat;
@@ -451,7 +446,7 @@ mc_poc (union param_val  val,
 
 
 static void
-mc_index (union param_val val, void *dat)
+mc_index (or1ksim *sim,union param_val val, void *dat)
 {
   struct mc *mc = dat;
   mc->index = val.int_val;
@@ -484,7 +479,7 @@ mc_sec_start ()
 }
 
 static void
-mc_sec_end (void *dat)
+mc_sec_end (or1ksim *sim,void *dat)
 {
   struct mc *mc = dat;
   struct mem_ops ops;
@@ -497,8 +492,8 @@ mc_sec_end (void *dat)
 
   /* FIXME: Check to see that the index given to this mc is unique */
 
-  mc->next = mcs;
-  mcs = mc;
+  mc->next = sim->mcs;
+  sim->mcs = mc;
 
   memset (&ops, 0, sizeof (struct mem_ops));
 
@@ -511,16 +506,16 @@ mc_sec_end (void *dat)
   ops.delayr = 2;
   ops.delayw = 2;
 
-  reg_mem_area (mc->baseaddr, MC_ADDR_SPACE, 1, &ops);
-  reg_sim_reset (mc_reset, dat);
-  reg_sim_stat (mc_status, dat);
+  reg_mem_area (sim, mc->baseaddr, MC_ADDR_SPACE, 1, &ops);
+  reg_sim_reset (sim,mc_reset, dat);
+  reg_sim_stat (sim, mc_status, dat);
 }
 
 void
-reg_mc_sec (void)
+reg_mc_sec (or1ksim *sim)
 {
   struct config_section *sec =
-    reg_config_sec ("mc", mc_sec_start, mc_sec_end);
+    reg_config_sec (sim, "mc", mc_sec_start, mc_sec_end);
 
   reg_config_param (sec, "enabled", paramt_int, mc_enabled);
   reg_config_param (sec, "baseaddr", paramt_addr, mc_baseaddr);

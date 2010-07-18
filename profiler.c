@@ -2,6 +2,7 @@
 
    Copyright (C) 2001 Marko Mlinar, markom@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -27,6 +28,7 @@
    by or1ksim. (use profile command interactively, when running or1ksim, or
    separate psim command).  */
 
+#include <stdlib.h>
 
 /* Autoconf and/or portability configuration */
 #include "config.h"
@@ -37,52 +39,6 @@
 #include "sim-config.h"
 #include "argtable2.h"
 
-/*! Maximum stack frames that can be profiled */
-#define MAX_STACK  1024
-
-/*! Data structure representing information about a stack frame */
-struct stack_struct
-{
-  unsigned int  addr;	   /*!< Function address */
-  unsigned int  cycles;    /*!< Cycles of func start; subfuncs added later */
-  unsigned int  raddr;	   /*!< Return address */
-  char          name[33];  /*!< Name of the function */
-};
-
-/*! Global: data about functions */
-struct func_struct  prof_func[MAX_FUNCS];
-
-/*! Global: total number of functions */
-int  prof_nfuncs = 0;
-
-/*! Global: current cycles */
-int  prof_cycles = 0;
-
-/*! Representation of the stack */
-static struct stack_struct  stack[MAX_STACK];
-
-/*! Current depth */
-static int  nstack = 0;
-
-/*! Max depth */
-static int  maxstack = 0;
-
-/*! Number of total calls */
-static int  ntotcalls = 0;
-
-/*! Number of covered calls */
-static int  nfunccalls = 0;
-
-/*! Whether we are in cumulative mode */
-static int  cumulative = 0;
-
-/*! Whether we should not report warnings */
-static int  quiet = 0;
-
-/*! File to read from */
-static FILE *fprof = 0;
-
-
 /*---------------------------------------------------------------------------*/
 /*! Acquire data from profiler file
 
@@ -91,21 +47,21 @@ static FILE *fprof = 0;
   @return  0 on success, return code otherwise                               */
 /*---------------------------------------------------------------------------*/
 int
-prof_acquire (const char *fprofname)
+prof_acquire (or1ksim *sim, const char *fprofname)
 {
   int line = 0;
   int reopened = 0;
 
-  if (runtime.sim.fprof)
+  if (sim->runtime.sim.fprof)
     {
-      fprof = runtime.sim.fprof;
+      sim->profiler.fprof = sim->runtime.sim.fprof;
       reopened = 1;
-      rewind (fprof);
+      rewind (sim->profiler.fprof);
     }
   else
-    fprof = fopen (fprofname, "rt");
+    sim->profiler.fprof = fopen (fprofname, "rt");
 
-  if (!fprof)
+  if (!sim->profiler.fprof)
     {
       fprintf (stderr, "Cannot open profile file: %s\n", fprofname);
       return 1;
@@ -113,86 +69,86 @@ prof_acquire (const char *fprofname)
 
   while (1)
     {
-      char dir = fgetc (fprof);
+      char dir = fgetc (sim->profiler.fprof);
       line++;
       if (dir == '+')
 	{
 	  if (fscanf
-	      (fprof, "%08X %08X %08X %s\n", &stack[nstack].cycles,
-	       &stack[nstack].raddr, &stack[nstack].addr,
-	       &stack[nstack].name[0]) != 4)
+	      (sim->profiler.fprof, "%08X %08X %08X %s\n", &sim->profiler.stack[sim->profiler.nstack].cycles,
+	       &sim->profiler.stack[sim->profiler.nstack].raddr, &sim->profiler.stack[sim->profiler.nstack].addr,
+	       &sim->profiler.stack[sim->profiler.nstack].name[0]) != 4)
 	    fprintf (stderr, "Error reading line #%i\n", line);
 	  else
 	    {
-	      prof_cycles = stack[nstack].cycles;
-	      nstack++;
-	      if (nstack > maxstack)
-		maxstack = nstack;
+	      sim->profiler.prof_cycles = sim->profiler.stack[sim->profiler.nstack].cycles;
+	      sim->profiler.nstack++;
+	      if (sim->profiler.nstack > sim->profiler.maxstack)
+		sim->profiler.maxstack = sim->profiler.nstack;
 	    }
-	  ntotcalls++;
+	  sim->profiler.ntotcalls++;
 	}
       else if (dir == '-')
 	{
 	  struct stack_struct s;
-	  if (fscanf (fprof, "%08X %08X\n", &s.cycles, &s.raddr) != 2)
+	  if (fscanf (sim->profiler.fprof, "%08X %08X\n", &s.cycles, &s.raddr) != 2)
 	    fprintf (stderr, "Error reading line #%i\n", line);
 	  else
 	    {
 	      int i;
-	      prof_cycles = s.cycles;
-	      for (i = nstack - 1; i >= 0; i--)
-		if (stack[i].raddr == s.raddr)
+	      sim->profiler.prof_cycles = s.cycles;
+	      for (i = sim->profiler.nstack - 1; i >= 0; i--)
+		if (sim->profiler.stack[i].raddr == s.raddr)
 		  break;
 	      if (i >= 0)
 		{
-		  /* pop everything above current from stack,
+		  /* pop everything above current from sim->profiler.,
 		     if more than one, something went wrong */
-		  while (nstack > i)
+		  while (sim->profiler.nstack > i)
 		    {
 		      int j;
 		      long time;
-		      nstack--;
-		      time = s.cycles - stack[nstack].cycles;
-		      if (!quiet && time < 0)
+		      sim->profiler.nstack--;
+		      time = s.cycles - sim->profiler.stack[sim->profiler.nstack].cycles;
+		      if (!sim->profiler.quiet && time < 0)
 			{
 			  fprintf (stderr,
 				   "WARNING: Negative time at %s (return addr = %08X).\n",
-				   stack[i].name, stack[i].raddr);
+				   sim->profiler.stack[i].name, sim->profiler.stack[i].raddr);
 			  time = 0;
 			}
 
 		      /* Whether in normal mode, we must substract called function from execution time.  */
-		      if (!cumulative)
-			for (j = 0; j < nstack; j++)
-			  stack[j].cycles += time;
+		      if (!sim->profiler.cumulative)
+			for (j = 0; j < sim->profiler.nstack; j++)
+			  sim->profiler.stack[j].cycles += time;
 
-		      if (!quiet && i != nstack)
+		      if (!sim->profiler.quiet && i != sim->profiler.nstack)
 			fprintf (stderr,
 				 "WARNING: Missaligned return call for %s (%08X) (found %s @ %08X), closing.\n",
-				 stack[nstack].name, stack[nstack].raddr,
-				 stack[i].name, stack[i].raddr);
+				 sim->profiler.stack[sim->profiler.nstack].name, sim->profiler.stack[sim->profiler.nstack].raddr,
+				 sim->profiler.stack[i].name, sim->profiler.stack[i].raddr);
 
-		      for (j = 0; j < prof_nfuncs; j++)
-			if (stack[nstack].addr == prof_func[j].addr)
+		      for (j = 0; j < sim->profiler.prof_nfuncs; j++)
+			if (sim->profiler.stack[sim->profiler.nstack].addr == sim->profiler.prof_func[j].addr)
 			  {	/* function exists, append. */
-			    prof_func[j].cum_cycles += time;
-			    prof_func[j].calls++;
-			    nfunccalls++;
+			    sim->profiler.prof_func[j].cum_cycles += time;
+			    sim->profiler.prof_func[j].calls++;
+			    sim->profiler.nfunccalls++;
 			    break;
 			  }
-		      if (j >= prof_nfuncs)
+		      if (j >= sim->profiler.prof_nfuncs)
 			{	/* function does not yet exist, create new. */
-			  prof_func[prof_nfuncs].cum_cycles = time;
-			  prof_func[prof_nfuncs].calls = 1;
-			  nfunccalls++;
-			  prof_func[prof_nfuncs].addr = stack[nstack].addr;
-			  strcpy (prof_func[prof_nfuncs].name,
-				  stack[nstack].name);
-			  prof_nfuncs++;
+			  sim->profiler.prof_func[sim->profiler.prof_nfuncs].cum_cycles = time;
+			  sim->profiler.prof_func[sim->profiler.prof_nfuncs].calls = 1;
+			  sim->profiler.nfunccalls++;
+			  sim->profiler.prof_func[sim->profiler.prof_nfuncs].addr = sim->profiler.stack[sim->profiler.nstack].addr;
+			  strcpy (sim->profiler.prof_func[sim->profiler.prof_nfuncs].name,
+				  sim->profiler.stack[sim->profiler.nstack].name);
+			  sim->profiler.prof_nfuncs++;
 			}
 		    }
 		}
-	      else if (!quiet)
+	      else if (!sim->profiler.quiet)
 		fprintf (stderr,
 			 "WARNING: Cannot find return call for (%08X), ignoring.\n",
 			 s.raddr);
@@ -205,50 +161,50 @@ prof_acquire (const char *fprofname)
   /* If we have reopened the file, we need to add end of "[outside functions]" */
   if (reopened)
     {
-      prof_cycles = runtime.sim.cycles;
-      /* pop everything above current from stack,
+      sim->profiler.prof_cycles = sim->runtime.sim.cycles;
+      /* pop everything above current from sim->profiler.,
          if more than one, something went wrong */
-      while (nstack > 0)
+      while (sim->profiler.nstack > 0)
 	{
 	  int j;
 	  long time;
-	  nstack--;
-	  time = runtime.sim.cycles - stack[nstack].cycles;
+	  sim->profiler.nstack--;
+	  time = sim->runtime.sim.cycles - sim->profiler.stack[sim->profiler.nstack].cycles;
 	  /* Whether in normal mode, we must substract called function from execution time.  */
-	  if (!cumulative)
-	    for (j = 0; j < nstack; j++)
-	      stack[j].cycles += time;
+	  if (!sim->profiler.cumulative)
+	    for (j = 0; j < sim->profiler.nstack; j++)
+	      sim->profiler.stack[j].cycles += time;
 
-	  for (j = 0; j < prof_nfuncs; j++)
-	    if (stack[nstack].addr == prof_func[j].addr)
+	  for (j = 0; j < sim->profiler.prof_nfuncs; j++)
+	    if (sim->profiler.stack[sim->profiler.nstack].addr == sim->profiler.prof_func[j].addr)
 	      {			/* function exists, append. */
-		prof_func[j].cum_cycles += time;
-		prof_func[j].calls++;
-		nfunccalls++;
+		sim->profiler.prof_func[j].cum_cycles += time;
+		sim->profiler.prof_func[j].calls++;
+		sim->profiler.nfunccalls++;
 		break;
 	      }
-	  if (j >= prof_nfuncs)
+	  if (j >= sim->profiler.prof_nfuncs)
 	    {			/* function does not yet exist, create new. */
-	      prof_func[prof_nfuncs].cum_cycles = time;
-	      prof_func[prof_nfuncs].calls = 1;
-	      nfunccalls++;
-	      prof_func[prof_nfuncs].addr = stack[nstack].addr;
-	      strcpy (prof_func[prof_nfuncs].name, stack[nstack].name);
-	      prof_nfuncs++;
+	      sim->profiler.prof_func[sim->profiler.prof_nfuncs].cum_cycles = time;
+	      sim->profiler.prof_func[sim->profiler.prof_nfuncs].calls = 1;
+	      sim->profiler.nfunccalls++;
+	      sim->profiler.prof_func[sim->profiler.prof_nfuncs].addr = sim->profiler.stack[sim->profiler.nstack].addr;
+	      strcpy (sim->profiler.prof_func[sim->profiler.prof_nfuncs].name, sim->profiler.stack[sim->profiler.nstack].name);
+	      sim->profiler.prof_nfuncs++;
 	    }
 	}
     }
   else
-    fclose (fprof);
+    fclose (sim->profiler.fprof);
   return 0;
 }
 
 /* Print out profiling data */
 static void
-prof_print ()
+prof_print (or1ksim *sim)
 {
   int i, j;
-  if (cumulative)
+  if (sim->profiler.cumulative)
     PRINTF ("CUMULATIVE TIMES\n");
   PRINTF
     ("---------------------------------------------------------------------------\n");
@@ -256,36 +212,36 @@ prof_print ()
     ("|function name            |addr    |# calls |avg cycles  |total cyles     |\n");
   PRINTF
     ("|-------------------------+--------+--------+------------+----------------|\n");
-  for (j = 0; j < prof_nfuncs; j++)
+  for (j = 0; j < sim->profiler.prof_nfuncs; j++)
     {
       int bestcyc = 0, besti = 0;
-      for (i = 0; i < prof_nfuncs; i++)
-	if (prof_func[i].cum_cycles > bestcyc)
+      for (i = 0; i < sim->profiler.prof_nfuncs; i++)
+	if (sim->profiler.prof_func[i].cum_cycles > bestcyc)
 	  {
-	    bestcyc = prof_func[i].cum_cycles;
+	    bestcyc = sim->profiler.prof_func[i].cum_cycles;
 	    besti = i;
 	  }
       i = besti;
       PRINTF ("| %-24s|%08X|%8li|%12.1f|%11li,%3.0f%%|\n",
-	      prof_func[i].name, prof_func[i].addr, prof_func[i].calls,
-	      ((double) prof_func[i].cum_cycles / prof_func[i].calls),
-	      prof_func[i].cum_cycles,
-	      (100. * prof_func[i].cum_cycles / prof_cycles));
-      prof_func[i].cum_cycles = -1;
+	      sim->profiler.prof_func[i].name, sim->profiler.prof_func[i].addr, sim->profiler.prof_func[i].calls,
+	      ((double) sim->profiler.prof_func[i].cum_cycles / sim->profiler.prof_func[i].calls),
+	      sim->profiler.prof_func[i].cum_cycles,
+	      (100. * sim->profiler.prof_func[i].cum_cycles / sim->profiler.prof_cycles));
+      sim->profiler.prof_func[i].cum_cycles = -1;
     }
   PRINTF
     ("---------------------------------------------------------------------------\n");
-  PRINTF ("Total %i functions, %i cycles.\n", prof_nfuncs, prof_cycles);
-  PRINTF ("Total function calls %i/%i (max depth %i).\n", nfunccalls,
-	  ntotcalls, maxstack);
+  PRINTF ("Total %i functions, %i cycles.\n", sim->profiler.prof_nfuncs, sim->profiler.prof_cycles);
+  PRINTF ("Total function calls %i/%i (max depth %i).\n", sim->profiler.nfunccalls,
+	  sim->profiler.ntotcalls, sim->profiler.maxstack);
 }
 
 /* Set options */
 void
-prof_set (int _quiet, int _cumulative)
+prof_set (or1ksim *sim, int _quiet, int _cumulative)
 {
-  quiet = _quiet;
-  cumulative = _cumulative;
+  sim->profiler.quiet = _quiet;
+  sim->profiler.cumulative = _cumulative;
 }
 
 /*---------------------------------------------------------------------------*/
@@ -302,7 +258,7 @@ prof_set (int _quiet, int _cumulative)
     @return  0 on success, 1 on failure                                      */
 /*---------------------------------------------------------------------------*/
 int
-main_profiler (int argc, char *argv[], int just_help)
+main_profiler (or1ksim* sim, int argc, char *argv[], int just_help)
 {
   struct arg_lit *vercop;
   struct arg_lit *help;
@@ -317,9 +273,9 @@ main_profiler (int argc, char *argv[], int just_help)
   /* Specify each argument, with fallback values */
   vercop = arg_lit0 ("v", "version", "version and copyright notice");
   help = arg_lit0 ("h", "help", "print this help message");
-  cum_arg = arg_lit0 ("c", "cumulative",
-		      "cumulative sum of cycles in functions");
-  quiet_arg = arg_lit0 ("q", "quiet", "suppress messages");
+  cum_arg = arg_lit0 ("c", "sim->profiler.cumulative",
+		      "sim->profiler.cumulative sum of cycles in functions");
+  quiet_arg = arg_lit0 ("q", "sim->profiler.quiet", "suppress messages");
   gen_file = arg_file0 ("g", "generate", "<file>",
 			"data file to analyse (default " "sim.profile)");
   gen_file->filename[0] = "sim.profile";
@@ -381,16 +337,16 @@ main_profiler (int argc, char *argv[], int just_help)
     }
 
   /* Cumulative result wanted? */
-  cumulative = cum_arg->count;
+  sim->profiler.cumulative = cum_arg->count;
 
   /* Suppress messages? */
-  quiet = quiet_arg->count;
+  sim->profiler.quiet = quiet_arg->count;
 
   /* Get the profile from the file */
-  prof_acquire (gen_file->filename[0]);
+  prof_acquire (sim, gen_file->filename[0]);
 
   /* Now we have all data acquired. Print out. */
-  prof_print ();
+  prof_print (sim);
 
   arg_freetable (argtab, sizeof (argtab) / sizeof (argtab[0]));
   return 0;

@@ -26,6 +26,6 @@
 #ifndef XTERM__H
 #define XTERM__H
 
-extern struct channel_ops  xterm_channel_ops;
+extern const struct channel_ops  xterm_channel_ops;
 
 #endif	/* XTERM__H */

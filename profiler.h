@@ -2,6 +2,7 @@
 
    Copyright (C) 2001 Marko Mlinar, markom@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -27,27 +28,13 @@
 #ifndef PROFILER__H
 #define PROFILER__H
 
-/*! Maximum number of functions that can be profiled */
-#define MAX_FUNCS 1024
-
-/*! Data structure for information about functions */
-struct func_struct {
-  unsigned int  addr;		/*!< Start address of function */
-  char          name[33];	/*!< Name of the function */
-  long          cum_cycles;	/*!< Total cycles spent in function */
-  long          calls;		/*!< Calls to this function */
-};
-
-/* Global data structures for external use */
-extern struct func_struct  prof_func[MAX_FUNCS];
-extern int                 prof_nfuncs;
-extern int                 prof_cycles;
+#include "siminstance.h"
 
 /* Function prototypes for external use */
-int   prof_acquire (const char *fprofname);
-void  prof_set (int  _quiet,
+int   prof_acquire (or1ksim *sim, const char *fprofname);
+void  prof_set (or1ksim *sim, int  _quiet,
 		int  _cumulative);
-int   main_profiler (int   argc,
+int   main_profiler (or1ksim* sim, int   argc,
 		     char *argv[],
 		     int   just_help);
 

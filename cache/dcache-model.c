@@ -2,6 +2,7 @@
 
    Copyright (C) 1999 Damjan Lampret, lampret@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
   
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
   
@@ -40,32 +41,19 @@
 #include "stats.h"
 #include "misc.h"
 
-
-/* Data cache */
-
-struct dc_set
-{
-  struct
-  {
-    uint32_t line[MAX_DC_BLOCK_SIZE/4];
-    oraddr_t tagaddr;		/* tag address */
-    int lru;			/* least recently used */
-  } way[MAX_DC_WAYS];
-} dc[MAX_DC_SETS];
-
 void
-dc_info (void)
+dc_info (or1ksim *sim)
 {
-  if (!(cpu_state.sprs[SPR_UPR] & SPR_UPR_DCP))
+  if (!(sim->cpu_state.sprs[SPR_UPR] & SPR_UPR_DCP))
     {
       PRINTF ("DCache not implemented. Set UPR[DCP].\n");
       return;
     }
 
   PRINTF ("Data cache %dKB: ",
-	  config.dc.nsets * config.dc.blocksize * config.dc.nways / 1024);
-  PRINTF ("%d ways, %d sets, block size %d bytes\n", config.dc.nways,
-	  config.dc.nsets, config.dc.blocksize);
+	  sim->config.dc.nsets * sim->config.dc.blocksize * sim->config.dc.nways / 1024);
+  PRINTF ("%d ways, %d sets, block size %d bytes\n", sim->config.dc.nways,
+	  sim->config.dc.nsets, sim->config.dc.blocksize);
 }
 
 /* First check if data is already in the cache and if it is:
@@ -81,52 +69,52 @@ dc_info (void)
 */
 
 uint32_t
-dc_simulate_read (oraddr_t dataaddr, oraddr_t virt_addr, int width)
+dc_simulate_read (or1ksim *sim,oraddr_t dataaddr, oraddr_t virt_addr, int width)
 {
   int set, way = -1;
   int i;
   oraddr_t tagaddr;
   uint32_t tmp = 0;
 
-  if (!(cpu_state.sprs[SPR_UPR] & SPR_UPR_DCP) ||
-      !(cpu_state.sprs[SPR_SR] & SPR_SR_DCE) || data_ci)
+  if (!(sim->cpu_state.sprs[SPR_UPR] & SPR_UPR_DCP) ||
+      !(sim->cpu_state.sprs[SPR_SR] & SPR_SR_DCE) || sim->data_ci)
     {
       if (width == 4)
-	tmp = evalsim_mem32 (dataaddr, virt_addr);
+	tmp = evalsim_mem32 (sim,dataaddr, virt_addr);
       else if (width == 2)
-	tmp = evalsim_mem16 (dataaddr, virt_addr);
+	tmp = evalsim_mem16 (sim,dataaddr, virt_addr);
       else if (width == 1)
-	tmp = evalsim_mem8 (dataaddr, virt_addr);
+	tmp = evalsim_mem8 (sim,dataaddr, virt_addr);
 
-      if (cur_area && cur_area->log)
-	fprintf (cur_area->log, "[%" PRIxADDR "] -> read %08" PRIx32 "\n",
+      if (sim->cur_area && sim->cur_area->log)
+	fprintf (sim->cur_area->log, "[%" PRIxADDR "] -> read %08" PRIx32 "\n",
 		 dataaddr, tmp);
 
       return tmp;
     }
 
   /* Which set to check out? */
-  set = (dataaddr / config.dc.blocksize) % config.dc.nsets;
-  tagaddr = (dataaddr / config.dc.blocksize) / config.dc.nsets;
+  set = (dataaddr / sim->config.dc.blocksize) % sim->config.dc.nsets;
+  tagaddr = (dataaddr / sim->config.dc.blocksize) / sim->config.dc.nsets;
 
   /* Scan all ways and try to find a matching way. */
-  for (i = 0; i < config.dc.nways; i++)
-    if (dc[set].way[i].tagaddr == tagaddr)
+  for (i = 0; i < sim->config.dc.nways; i++)
+    if (sim->dc[set].way[i].tagaddr == tagaddr)
       way = i;
 
   /* Did we find our cached data? */
   if (way >= 0)
     {				/* Yes, we did. */
-      dc_stats.readhit++;
+      sim->dc_stats.readhit++;
 
-      for (i = 0; i < config.dc.nways; i++)
-	if (dc[set].way[i].lru > dc[set].way[way].lru)
-	  dc[set].way[i].lru--;
-      dc[set].way[way].lru = config.dc.ustates - 1;
-      runtime.sim.mem_cycles += config.dc.load_hitdelay;
+      for (i = 0; i < sim->config.dc.nways; i++)
+	if (sim->dc[set].way[i].lru > sim->dc[set].way[way].lru)
+	  sim->dc[set].way[i].lru--;
+      sim->dc[set].way[way].lru = sim->config.dc.ustates - 1;
+      sim->runtime.sim.mem_cycles += sim->config.dc.load_hitdelay;
 
       tmp =
-	dc[set].way[way].line[(dataaddr & (config.dc.blocksize - 1)) >> 2];
+	sim->dc[set].way[way].line[(dataaddr & (sim->config.dc.blocksize - 1)) >> 2];
       if (width == 4)
 	return tmp;
       else if (width == 2)
@@ -142,51 +130,51 @@ dc_simulate_read (oraddr_t dataaddr, oraddr_t virt_addr, int width)
     }
   else
     {				/* No, we didn't. */
-      int minlru = config.dc.ustates - 1;
+      int minlru = sim->config.dc.ustates - 1;
       int minway = 0;
 
-      dc_stats.readmiss++;
+      sim->dc_stats.readmiss++;
 
-      for (i = 0; i < config.dc.nways; i++)
+      for (i = 0; i < sim->config.dc.nways; i++)
 	{
-	  if (dc[set].way[i].lru < minlru)
+	  if (sim->dc[set].way[i].lru < minlru)
 	    {
 	      minway = i;
-	      minlru = dc[set].way[i].lru;
+	      minlru = sim->dc[set].way[i].lru;
 	    }
 	}
 
-      for (i = 0; i < (config.dc.blocksize); i += 4)
+      for (i = 0; i < (sim->config.dc.blocksize); i += 4)
 	{
 	  /* FIXME: What is the virtual address meant to be? (ie. What happens if
 	   * we read out of memory while refilling a cache line?) */
 	  tmp =
-	    evalsim_mem32 ((dataaddr & ~(config.dc.blocksize - 1)) +
+	    evalsim_mem32 (sim,(dataaddr & ~(sim->config.dc.blocksize - 1)) +
 			   (((dataaddr & ~ADDR_C (3)) +
-			     i) & (config.dc.blocksize - 1)), 0);
+			     i) & (sim->config.dc.blocksize - 1)), 0);
 
-	  dc[set].way[minway].
-	    line[((dataaddr + i) & (config.dc.blocksize - 1)) >> 2] = tmp;
-	  if (!cur_area)
+	  sim->dc[set].way[minway].
+	    line[((dataaddr + i) & (sim->config.dc.blocksize - 1)) >> 2] = tmp;
+	  if (!sim->cur_area)
 	    {
-	      dc[set].way[minway].tagaddr = -1;
-	      dc[set].way[minway].lru = 0;
+	      sim->dc[set].way[minway].tagaddr = -1;
+	      sim->dc[set].way[minway].lru = 0;
 	      return 0;
 	    }
-	  else if (cur_area->log)
-	    fprintf (cur_area->log, "[%" PRIxADDR "] -> read %08" PRIx32 "\n",
+	  else if (sim->cur_area->log)
+	    fprintf (sim->cur_area->log, "[%" PRIxADDR "] -> read %08" PRIx32 "\n",
 		     dataaddr, tmp);
 	}
 
-      dc[set].way[minway].tagaddr = tagaddr;
-      for (i = 0; i < config.dc.nways; i++)
-	if (dc[set].way[i].lru)
-	  dc[set].way[i].lru--;
-      dc[set].way[minway].lru = config.dc.ustates - 1;
-      runtime.sim.mem_cycles += config.dc.load_missdelay;
+      sim->dc[set].way[minway].tagaddr = tagaddr;
+      for (i = 0; i < sim->config.dc.nways; i++)
+	if (sim->dc[set].way[i].lru)
+	  sim->dc[set].way[i].lru--;
+      sim->dc[set].way[minway].lru = sim->config.dc.ustates - 1;
+      sim->runtime.sim.mem_cycles += sim->config.dc.load_missdelay;
 
       tmp =
-	dc[set].way[minway].line[(dataaddr & (config.dc.blocksize - 1)) >> 2];
+	sim->dc[set].way[minway].line[(dataaddr & (sim->config.dc.blocksize - 1)) >> 2];
       if (width == 4)
 	return tmp;
       else if (width == 2)
@@ -215,7 +203,7 @@ dc_simulate_read (oraddr_t dataaddr, oraddr_t virt_addr, int width)
 */
 
 void
-dc_simulate_write (oraddr_t dataaddr, oraddr_t virt_addr, uint32_t data,
+dc_simulate_write (or1ksim *sim,oraddr_t dataaddr, oraddr_t virt_addr, uint32_t data,
 		   int width)
 {
   int set, way = -1;
@@ -224,38 +212,38 @@ dc_simulate_write (oraddr_t dataaddr, oraddr_t virt_addr, uint32_t data,
   uint32_t tmp;
 
   if (width == 4)
-    setsim_mem32 (dataaddr, virt_addr, data);
+    setsim_mem32 (sim, dataaddr, virt_addr, data);
   else if (width == 2)
-    setsim_mem16 (dataaddr, virt_addr, data);
+    setsim_mem16 (sim, dataaddr, virt_addr, data);
   else if (width == 1)
-    setsim_mem8 (dataaddr, virt_addr, data);
+    setsim_mem8 (sim, dataaddr, virt_addr, data);
 
-  if (!(cpu_state.sprs[SPR_UPR] & SPR_UPR_DCP) ||
-      !(cpu_state.sprs[SPR_SR] & SPR_SR_DCE) || data_ci || !cur_area)
+  if (!(sim->cpu_state.sprs[SPR_UPR] & SPR_UPR_DCP) ||
+      !(sim->cpu_state.sprs[SPR_SR] & SPR_SR_DCE) || sim->data_ci || !sim->cur_area)
     return;
 
   /* Which set to check out? */
-  set = (dataaddr / config.dc.blocksize) % config.dc.nsets;
-  tagaddr = (dataaddr / config.dc.blocksize) / config.dc.nsets;
+  set = (dataaddr / sim->config.dc.blocksize) % sim->config.dc.nsets;
+  tagaddr = (dataaddr / sim->config.dc.blocksize) / sim->config.dc.nsets;
 
   /* Scan all ways and try to find a matching way. */
-  for (i = 0; i < config.dc.nways; i++)
-    if (dc[set].way[i].tagaddr == tagaddr)
+  for (i = 0; i < sim->config.dc.nways; i++)
+    if (sim->dc[set].way[i].tagaddr == tagaddr)
       way = i;
 
   /* Did we find our cached data? */
   if (way >= 0)
     {				/* Yes, we did. */
-      dc_stats.writehit++;
+      sim->dc_stats.writehit++;
 
-      for (i = 0; i < config.dc.nways; i++)
-	if (dc[set].way[i].lru > dc[set].way[way].lru)
-	  dc[set].way[i].lru--;
-      dc[set].way[way].lru = config.dc.ustates - 1;
-      runtime.sim.mem_cycles += config.dc.store_hitdelay;
+      for (i = 0; i < sim->config.dc.nways; i++)
+	if (sim->dc[set].way[i].lru > sim->dc[set].way[way].lru)
+	  sim->dc[set].way[i].lru--;
+      sim->dc[set].way[way].lru = sim->config.dc.ustates - 1;
+      sim->runtime.sim.mem_cycles += sim->config.dc.store_hitdelay;
 
       tmp =
-	dc[set].way[way].line[(dataaddr & (config.dc.blocksize - 1)) >> 2];
+	sim->dc[set].way[way].line[(dataaddr & (sim->config.dc.blocksize - 1)) >> 2];
       if (width == 4)
 	tmp = data;
       else if (width == 2)
@@ -268,42 +256,42 @@ dc_simulate_write (oraddr_t dataaddr, oraddr_t virt_addr, uint32_t data,
 	  tmp &= ~(0xff << (8 * (3 - (dataaddr & 3))));
 	  tmp |= (data & 0xff) << (8 * (3 - (dataaddr & 3)));
 	}
-      dc[set].way[way].line[(dataaddr & (config.dc.blocksize - 1)) >> 2] =
+      sim->dc[set].way[way].line[(dataaddr & (sim->config.dc.blocksize - 1)) >> 2] =
 	tmp;
     }
   else
     {				/* No, we didn't. */
-      int minlru = config.dc.ustates - 1;
+      int minlru = sim->config.dc.ustates - 1;
       int minway = 0;
 
-      dc_stats.writemiss++;
+      sim->dc_stats.writemiss++;
 
-      for (i = 0; i < config.dc.nways; i++)
-	if (dc[set].way[i].lru < minlru)
+      for (i = 0; i < sim->config.dc.nways; i++)
+	if (sim->dc[set].way[i].lru < minlru)
 	  minway = i;
 
-      for (i = 0; i < (config.dc.blocksize); i += 4)
+      for (i = 0; i < (sim->config.dc.blocksize); i += 4)
 	{
-	  dc[set].way[minway].
-	    line[((dataaddr + i) & (config.dc.blocksize - 1)) >> 2] =
+	  sim->dc[set].way[minway].
+	    line[((dataaddr + i) & (sim->config.dc.blocksize - 1)) >> 2] =
 	    /* FIXME: Same comment as in dc_simulate_read */
-	    evalsim_mem32 ((dataaddr & ~(config.dc.blocksize - 1)) +
-			   (((dataaddr & ~3ul) + i) & (config.dc.blocksize -
+	    evalsim_mem32 (sim, (dataaddr & ~(sim->config.dc.blocksize - 1)) +
+			   (((dataaddr & ~3ul) + i) & (sim->config.dc.blocksize -
 						       1)), 0);
-	  if (!cur_area)
+	  if (!sim->cur_area)
 	    {
-	      dc[set].way[minway].tagaddr = -1;
-	      dc[set].way[minway].lru = 0;
+	      sim->dc[set].way[minway].tagaddr = -1;
+	      sim->dc[set].way[minway].lru = 0;
 	      return;
 	    }
 	}
 
-      dc[set].way[minway].tagaddr = tagaddr;
-      for (i = 0; i < config.dc.nways; i++)
-	if (dc[set].way[i].lru)
-	  dc[set].way[i].lru--;
-      dc[set].way[minway].lru = config.dc.ustates - 1;
-      runtime.sim.mem_cycles += config.dc.store_missdelay;
+      sim->dc[set].way[minway].tagaddr = tagaddr;
+      for (i = 0; i < sim->config.dc.nways; i++)
+	if (sim->dc[set].way[i].lru)
+	  sim->dc[set].way[i].lru--;
+      sim->dc[set].way[minway].lru = sim->config.dc.ustates - 1;
+      sim->runtime.sim.mem_cycles += sim->config.dc.store_missdelay;
     }
 }
 
@@ -313,38 +301,38 @@ dc_simulate_write (oraddr_t dataaddr, oraddr_t virt_addr, uint32_t data,
 */
 
 void
-dc_inv (oraddr_t dataaddr)
+dc_inv (or1ksim *sim,oraddr_t dataaddr)
 {
   int set, way = -1;
   int i;
   oraddr_t tagaddr;
 
-  if (!(cpu_state.sprs[SPR_UPR] & SPR_UPR_DCP))
+  if (!(sim->cpu_state.sprs[SPR_UPR] & SPR_UPR_DCP))
     return;
 
   /* Which set to check out? */
-  set = (dataaddr / config.dc.blocksize) % config.dc.nsets;
-  tagaddr = (dataaddr / config.dc.blocksize) / config.dc.nsets;
+  set = (dataaddr / sim->config.dc.blocksize) % sim->config.dc.nsets;
+  tagaddr = (dataaddr / sim->config.dc.blocksize) / sim->config.dc.nsets;
 
-  if (!(cpu_state.sprs[SPR_SR] & SPR_SR_DCE))
+  if (!(sim->cpu_state.sprs[SPR_SR] & SPR_SR_DCE))
     {
-      for (i = 0; i < config.dc.nways; i++)
+      for (i = 0; i < sim->config.dc.nways; i++)
 	{
-	  dc[set].way[i].tagaddr = -1;
-	  dc[set].way[i].lru = 0;
+	  sim->dc[set].way[i].tagaddr = -1;
+	  sim->dc[set].way[i].lru = 0;
 	}
       return;
     }
   /* Scan all ways and try to find a matching way. */
-  for (i = 0; i < config.dc.nways; i++)
-    if (dc[set].way[i].tagaddr == tagaddr)
+  for (i = 0; i < sim->config.dc.nways; i++)
+    if (sim->dc[set].way[i].tagaddr == tagaddr)
       way = i;
 
   /* Did we find our cached data? */
   if (way >= 0)
     {				/* Yes, we did. */
-      dc[set].way[way].tagaddr = -1;
-      dc[set].way[way].lru = 0;
+      sim->dc[set].way[way].tagaddr = -1;
+      sim->dc[set].way[way].lru = 0;
     }
 }
 
@@ -359,19 +347,19 @@ dc_inv (oraddr_t dataaddr)
    @param[in] dat  The config data structure (not used here)                 */
 /*---------------------------------------------------------------------------*/
 static void
-dc_enabled (union param_val  val,
+dc_enabled (or1ksim *sim,union param_val  val,
 	    void            *dat)
 {
   if (val.int_val)
     {
-      cpu_state.sprs[SPR_UPR] |= SPR_UPR_DCP;
+      sim->cpu_state.sprs[SPR_UPR] |= SPR_UPR_DCP;
     }
   else
     {
-      cpu_state.sprs[SPR_UPR] &= ~SPR_UPR_DCP;
+      sim->cpu_state.sprs[SPR_UPR] &= ~SPR_UPR_DCP;
     }
 
-  config.dc.enabled = val.int_val;
+  sim->config.dc.enabled = val.int_val;
 
     }	/* dc_enabled() */
 
@@ -386,17 +374,17 @@ dc_enabled (union param_val  val,
    @param[in] dat  The config data structure (not used here)                 */
 /*---------------------------------------------------------------------------*/
 static void
-dc_nsets (union param_val  val,
+dc_nsets (or1ksim *sim,union param_val  val,
 	  void            *dat)
 {
   if (is_power2 (val.int_val) && (val.int_val <= MAX_DC_SETS))
     {
       int  set_bits = log2_int (val.int_val);
 
-      config.dc.nsets = val.int_val;
+      sim->config.dc.nsets = val.int_val;
 
-      cpu_state.sprs[SPR_DCCFGR] &= ~SPR_DCCFGR_NCS;
-      cpu_state.sprs[SPR_DCCFGR] |= set_bits << SPR_DCCFGR_NCS_OFF;
+      sim->cpu_state.sprs[SPR_DCCFGR] &= ~SPR_DCCFGR_NCS;
+      sim->cpu_state.sprs[SPR_DCCFGR] |= set_bits << SPR_DCCFGR_NCS_OFF;
     }
   else
     {
@@ -416,17 +404,17 @@ dc_nsets (union param_val  val,
    @param[in] dat  The config data structure (not used here)                 */
 /*---------------------------------------------------------------------------*/
 static void
-dc_nways (union param_val  val,
+dc_nways (or1ksim *sim,union param_val  val,
 	  void            *dat)
 {
   if (is_power2 (val.int_val) && (val.int_val <= MAX_DC_WAYS))
     {
       int  way_bits = log2_int (val.int_val);
 
-      config.dc.nways = val.int_val;
+      sim->config.dc.nways = val.int_val;
 
-      cpu_state.sprs[SPR_DCCFGR] &= ~SPR_DCCFGR_NCW;
-      cpu_state.sprs[SPR_DCCFGR] |= way_bits << SPR_DCCFGR_NCW_OFF;
+      sim->cpu_state.sprs[SPR_DCCFGR] &= ~SPR_DCCFGR_NCW;
+      sim->cpu_state.sprs[SPR_DCCFGR] |= way_bits << SPR_DCCFGR_NCW_OFF;
     }
   else
     {
@@ -446,19 +434,19 @@ dc_nways (union param_val  val,
    @param[in] dat  The config data structure (not used here)                 */
 /*---------------------------------------------------------------------------*/
 static void
-dc_blocksize (union param_val  val,
+dc_blocksize (or1ksim *sim,union param_val  val,
 	      void            *dat)
 {
   switch (val.int_val)
     {
     case MIN_DC_BLOCK_SIZE:
-      config.dc.blocksize         = val.int_val;
-      cpu_state.sprs[SPR_DCCFGR] &= ~SPR_DCCFGR_CBS;
+      sim->config.dc.blocksize         = val.int_val;
+      sim->cpu_state.sprs[SPR_DCCFGR] &= ~SPR_DCCFGR_CBS;
       break;
 
     case MAX_DC_BLOCK_SIZE:
-      config.dc.blocksize         = val.int_val;
-      cpu_state.sprs[SPR_DCCFGR] |= SPR_DCCFGR_CBS;
+      sim->config.dc.blocksize         = val.int_val;
+      sim->cpu_state.sprs[SPR_DCCFGR] |= SPR_DCCFGR_CBS;
       break;
 
     default:
@@ -478,12 +466,12 @@ dc_blocksize (union param_val  val,
    @param[in] dat  The config data structure (not used here)                 */
 /*---------------------------------------------------------------------------*/
 static void
-dc_ustates (union param_val  val,
+dc_ustates (or1ksim *sim,union param_val  val,
 	    void            *dat)
 {
   if ((val.int_val >= 2) && (val.int_val <= 4))
     {
-      config.dc.ustates = val.int_val;
+      sim->config.dc.ustates = val.int_val;
     }
   else
     {
@@ -494,33 +482,33 @@ dc_ustates (union param_val  val,
 
 
 static void
-dc_load_hitdelay (union param_val val, void *dat)
+dc_load_hitdelay (or1ksim *sim,union param_val val, void *dat)
 {
-  config.dc.load_hitdelay = val.int_val;
+  sim->config.dc.load_hitdelay = val.int_val;
 }
 
 static void
-dc_load_missdelay (union param_val val, void *dat)
+dc_load_missdelay (or1ksim *sim,union param_val val, void *dat)
 {
-  config.dc.load_missdelay = val.int_val;
+  sim->config.dc.load_missdelay = val.int_val;
 }
 
 static void
-dc_store_hitdelay (union param_val val, void *dat)
+dc_store_hitdelay (or1ksim *sim,union param_val val, void *dat)
 {
-  config.dc.store_hitdelay = val.int_val;
+  sim->config.dc.store_hitdelay = val.int_val;
 }
 
 static void
-dc_store_missdelay (union param_val val, void *dat)
+dc_store_missdelay (or1ksim *sim,union param_val val, void *dat)
 {
-  config.dc.store_missdelay = val.int_val;
+  sim->config.dc.store_missdelay = val.int_val;
 }
 
 void
-reg_dc_sec (void)
+reg_dc_sec (or1ksim* sim)
 {
-  struct config_section *sec = reg_config_sec ("dc", NULL, NULL);
+  struct config_section *sec = reg_config_sec (sim, "dc", NULL, NULL);
 
   reg_config_param (sec, "enabled", paramt_int, dc_enabled);
   reg_config_param (sec, "nsets", paramt_int, dc_nsets);

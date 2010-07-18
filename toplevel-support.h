@@ -2,6 +2,7 @@
 
    Copyright (C) 1999 Damjan Lampret, lampret@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -31,12 +32,18 @@
 #ifndef TOPLEVEL_SUPPORT__H
 #define TOPLEVEL_SUPPORT__H
 
+#include "siminstance.h"
+
 /* Prototypes for external use */
 extern void  ctrl_c (int  signum);
-extern void  reg_sim_reset (void (*reset_hook) (void *), void *dat);
-extern void  sim_done ();
-extern void  check_int (void *dat);
-extern void  sim_reset ();
-extern void  sim_init ();
+extern void  reg_sim_reset (or1ksim *sim,void (*reset_hook) (or1ksim *sim,void *), void *dat);
+extern void  sim_done (or1ksim *sim);
+extern void  check_int (or1ksim *sim, void *dat);
+extern void  sim_reset (or1ksim *sim);
+extern void  sim_init (or1ksim *sim);
+
+extern void sim_defaults(or1ksim *sim);
+extern or1ksim* sim_instance(void);
+extern int sim_register( or1ksim* sim );
 
 #endif	/* TOPLEVEL_SUPPORT__H */

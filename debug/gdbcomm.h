@@ -2,6 +2,7 @@
 
    Copyright (C) 2001 by Marko Mlinar, markom@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -27,14 +28,16 @@
 #ifndef GDBCOMM__H
 #define GDBCOMM__H
 
+#include "siminstance.h"
+
 enum boolean {
   FALSE = 0,
   TRUE  = 1
 };
 
 /* Prototypes for external use */
-extern void  handle_server_socket (enum boolean);
-extern void  block_jtag ();
-extern void  gdbcomm_init ();
+extern void  handle_server_socket (or1ksim *sim, enum boolean);
+extern void  block_jtag (or1ksim *sim);
+extern void  gdbcomm_init (or1ksim *sim);
 
 #endif /* GDBCOMM__H */

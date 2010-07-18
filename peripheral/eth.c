@@ -3,6 +3,7 @@
    Copyright (C) 2001 by Erez Volk, erez@opencores.org
                          Ivan Guzvinec, ivang@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -404,13 +405,13 @@ struct eth_device
 
 
 /* simulator interface */
-static void eth_vapi_read (unsigned long id, unsigned long data, void *dat);
+static void eth_vapi_read (or1ksim *sim,unsigned long id, unsigned long data, void *dat);
 /* register interface */
-static void eth_write32 (oraddr_t addr, uint32_t value, void *dat);
-static uint32_t eth_read32 (oraddr_t addr, void *dat);
+static void eth_write32 (or1ksim *sim,oraddr_t addr, uint32_t value, void *dat);
+static uint32_t eth_read32 (or1ksim *sim, oraddr_t addr, void *dat);
 /* clock */
-static void eth_controller_tx_clock (void *);
-static void eth_controller_rx_clock (void *);
+static void eth_controller_tx_clock (or1ksim *sim,void *);
+static void eth_controller_rx_clock (or1ksim *sim,void *);
 /* utility functions */
 static ssize_t eth_read_rx_file (struct eth_device *, void *, size_t);
 static void eth_skip_rx_file (struct eth_device *, off_t);
@@ -425,7 +426,7 @@ static void eth_write_tx_bd_num (struct eth_device *, unsigned long value);
  * Responsible for starting and finishing TX
  */
 static void
-eth_controller_tx_clock (void *dat)
+eth_controller_tx_clock (or1ksim *sim,void *dat)
 {
   struct eth_device *eth = dat;
   int bAdvance = 1;
@@ -510,7 +511,7 @@ eth_controller_tx_clock (void *dat)
       if (eth->tx.bytes_sent < eth->tx.packet_length)
 	{
 	  read_word =
-	    eval_direct32 (eth->tx.bytes_sent + eth->tx.bd_addr, 0, 0);
+	    eval_direct32 (sim,eth->tx.bytes_sent + eth->tx.bd_addr, 0, 0);
 	  eth->tx_buff[eth->tx.bytes_sent] =
 	    (unsigned char) (read_word >> 24);
 	  eth->tx_buff[eth->tx.bytes_sent + 1] =
@@ -575,7 +576,7 @@ eth_controller_tx_clock (void *dat)
 	  TEST_FLAG (eth->regs.int_mask, ETH_INT_MASK, TXB_M))
 	{
 	  if (TEST_FLAG (eth->tx.bd, ETH_TX_BD, IRQ))
-	    report_interrupt (eth->mac_int);
+	    report_interrupt (sim,eth->mac_int);
 	}
 
       /* advance to next BD */
@@ -607,7 +608,7 @@ eth_controller_tx_clock (void *dat)
  * Responsible for starting and finishing RX
  */
 static void
-eth_controller_rx_clock (void *dat)
+eth_controller_rx_clock (or1ksim *sim,void *dat)
 {
   struct eth_device *eth = dat;
   long nread;
@@ -662,7 +663,7 @@ eth_controller_rx_clock (void *dat)
 	    {
 	      SET_FLAG (eth->regs.int_source, ETH_INT_SOURCE, BUSY);
 	      if (TEST_FLAG (eth->regs.int_mask, ETH_INT_MASK, BUSY_M))
-		report_interrupt (eth->mac_int);
+		report_interrupt (sim,eth->mac_int);
 	    }
 	}
       break;
@@ -678,7 +679,7 @@ eth_controller_rx_clock (void *dat)
 	      sizeof (eth->rx.packet_length))
 	    {
 	      /* TODO: just do what real ethernet would do (some kind of error state) */
-	      sim_done ();
+	      sim_done (sim);
 	      break;
 	    }
 
@@ -762,7 +763,7 @@ eth_controller_rx_clock (void *dat)
 	((unsigned long) eth->rx_buff[eth->rx.bytes_read + 1] << 16) |
 	((unsigned long) eth->rx_buff[eth->rx.bytes_read + 2] << 8) |
 	((unsigned long) eth->rx_buff[eth->rx.bytes_read + 3]);
-      set_direct32 (eth->rx.bd_addr + eth->rx.bytes_read, send_word, 0, 0);
+      set_direct32 (sim,eth->rx.bd_addr + eth->rx.bytes_read, send_word, 0, 0);
       /* update counters */
       eth->rx.bytes_left -= 4;
       eth->rx.bytes_read += 4;
@@ -799,7 +800,7 @@ eth_controller_rx_clock (void *dat)
 	  if ((TEST_FLAG (eth->regs.int_mask, ETH_INT_MASK, RXB_M)) &&
 	      (TEST_FLAG (eth->rx.bd, ETH_RX_BD, IRQ)))
 	    {
-	      report_interrupt (eth->mac_int);
+	      report_interrupt (sim,eth->mac_int);
 	    }
 
 	  /* ready to receive next packet */
@@ -863,7 +864,7 @@ eth_read_rx_file (struct eth_device *eth, void *buf, size_t count)
          memory address space.
 */
 static void
-eth_reset (void *dat)
+eth_reset (or1ksim *sim, void *dat)
 {
   struct eth_device *eth = dat;
 #if HAVE_ETH_PHY
@@ -975,7 +976,7 @@ eth_reset (void *dat)
       /* Initialize VAPI */
       if (eth->base_vapi_id)
 	{
-	  vapi_install_multi_handler (eth->base_vapi_id, ETH_NUM_VAPI_IDS,
+	  vapi_install_multi_handler (sim, eth->base_vapi_id, ETH_NUM_VAPI_IDS,
 				      eth_vapi_read, dat);
 	}
     }
@@ -984,11 +985,11 @@ eth_reset (void *dat)
 /* ========================================================================= */
 
 
-/* 
-  Print register values on stdout 
+/*
+  Print register values on stdout
 */
 static void
-eth_status (void *dat)
+eth_status (or1ksim *sim, void *dat)
 {
   struct eth_device *eth = dat;
 
@@ -1019,11 +1020,11 @@ eth_status (void *dat)
 /* ========================================================================= */
 
 
-/* 
-  Read a register 
+/*
+  Read a register
 */
 static uint32_t
-eth_read32 (oraddr_t addr, void *dat)
+eth_read32 (or1ksim *sim, oraddr_t addr, void *dat)
 {
   struct eth_device *eth = dat;
 
@@ -1087,11 +1088,11 @@ eth_read32 (oraddr_t addr, void *dat)
 /* ========================================================================= */
 
 
-/* 
-  Write a register 
+/*
+  Write a register
 */
 static void
-eth_write32 (oraddr_t addr, uint32_t value, void *dat)
+eth_write32 (or1ksim *sim,oraddr_t addr, uint32_t value, void *dat)
 {
   struct eth_device *eth = dat;
 
@@ -1114,11 +1115,11 @@ eth_write32 (oraddr_t addr, uint32_t value, void *dat)
       eth->regs.moder = value;
 
       if (TEST_FLAG (value, ETH_MODER, RST))
-	eth_reset (dat);
+	eth_reset (sim, dat);
       return;
     case ETH_INT_SOURCE:
       if (!(eth->regs.int_source & ~value) && eth->regs.int_source)
-	clear_interrupt (eth->mac_int);
+	clear_interrupt (sim,eth->mac_int);
       eth->regs.int_source &= ~value;
       return;
     case ETH_INT_MASK:
@@ -1201,7 +1202,7 @@ eth_write32 (oraddr_t addr, uint32_t value, void *dat)
  *   VAPI connection to outside
  */
 static void
-eth_vapi_read (unsigned long id, unsigned long data, void *dat)
+eth_vapi_read (or1ksim *sim,unsigned long id, unsigned long data, void *dat)
 {
   unsigned long which;
   struct eth_device *eth = dat;
@@ -1245,7 +1246,7 @@ eth_write_tx_bd_num (struct eth_device *eth, unsigned long value)
    @param[in] dat  The config data structure                                 */
 /*---------------------------------------------------------------------------*/
 static void
-eth_enabled (union param_val  val,
+eth_enabled (or1ksim *sim,union param_val  val,
 	     void            *dat)
 {
   struct eth_device *eth = dat;
@@ -1262,7 +1263,7 @@ eth_enabled (union param_val  val,
    @param[in] dat  The config data structure                                 */
 /*---------------------------------------------------------------------------*/
 static void
-eth_baseaddr (union param_val  val,
+eth_baseaddr (or1ksim *sim,union param_val  val,
 	      void            *dat)
 {
   struct eth_device *eth = dat;
@@ -1281,7 +1282,7 @@ eth_baseaddr (union param_val  val,
    @param[in] dat  The config data structure                                 */
 /*---------------------------------------------------------------------------*/
 static void
-eth_dma (union param_val  val,
+eth_dma (or1ksim *sim,union param_val  val,
 	 void            *dat)
 {
   struct eth_device *eth = dat;
@@ -1299,7 +1300,7 @@ eth_dma (union param_val  val,
    @param[in] dat  The config data structure                                 */
 /*---------------------------------------------------------------------------*/
 static void
-eth_irq (union param_val  val,
+eth_irq (or1ksim *sim,union param_val  val,
 	 void            *dat)
 {
   struct eth_device *eth = dat;
@@ -1319,7 +1320,7 @@ eth_irq (union param_val  val,
    @param[in] dat  The config data structure                                 */
 /*---------------------------------------------------------------------------*/
 static void
-eth_rtx_type (union param_val  val,
+eth_rtx_type (or1ksim *sim,union param_val  val,
 	      void            *dat)
 {
   struct eth_device *eth = dat;
@@ -1347,7 +1348,7 @@ eth_rtx_type (union param_val  val,
    @param[in] dat  The config data structure                                 */
 /*---------------------------------------------------------------------------*/
 static void
-eth_rx_channel (union param_val  val,
+eth_rx_channel (or1ksim *sim,union param_val  val,
 		void            *dat)
 {
   struct eth_device *eth = dat;
@@ -1368,7 +1369,7 @@ eth_rx_channel (union param_val  val,
    @param[in] dat  The config data structure                                 */
 /*---------------------------------------------------------------------------*/
 static void
-eth_tx_channel (union param_val  val,
+eth_tx_channel (or1ksim *sim,union param_val  val,
 		void            *dat)
 {
   struct eth_device *eth = dat;
@@ -1389,7 +1390,7 @@ eth_tx_channel (union param_val  val,
    @param[in] dat  The config data structure                                 */
 /*---------------------------------------------------------------------------*/
 static void
-eth_rxfile (union param_val  val,
+eth_rxfile (or1ksim *sim,union param_val  val,
 	    void            *dat)
 {
   struct eth_device *eth = dat;
@@ -1417,7 +1418,7 @@ eth_rxfile (union param_val  val,
    @param[in] dat  The config data structure                                 */
 /*---------------------------------------------------------------------------*/
 static void
-eth_txfile (union param_val  val,
+eth_txfile (or1ksim *sim,union param_val  val,
 	    void            *dat)
 {
   struct eth_device *eth = dat;
@@ -1446,7 +1447,7 @@ eth_txfile (union param_val  val,
    @param[in] dat  The config data structure                                 */
 /*---------------------------------------------------------------------------*/
 static void
-eth_sockif (union param_val  val,
+eth_sockif (or1ksim *sim,union param_val  val,
 	    void            *dat)
 {
   struct eth_device *eth = dat;
@@ -1473,7 +1474,7 @@ eth_sockif (union param_val  val,
 
 
 static void
-eth_vapi_id (union param_val  val,
+eth_vapi_id (or1ksim *sim,union param_val  val,
 	     void            *dat)
 {
   struct eth_device *eth = dat;
@@ -1486,7 +1487,7 @@ eth_vapi_id (union param_val  val,
    ALL parameters are set explicitly to default values.                      */
 /*---------------------------------------------------------------------------*/
 static void *
-eth_sec_start (void)
+eth_sec_start (or1ksim *sim)
 {
   struct eth_device *new = malloc (sizeof (struct eth_device));
 
@@ -1514,7 +1515,7 @@ eth_sec_start (void)
 }
 
 static void
-eth_sec_end (void *dat)
+eth_sec_end (or1ksim *sim,void *dat)
 {
   struct eth_device *eth = dat;
   struct mem_ops ops;
@@ -1538,9 +1539,9 @@ eth_sec_end (void *dat)
   /* FIXME: Correct delay? */
   ops.delayr = 2;
   ops.delayw = 2;
-  reg_mem_area (eth->baseaddr, ETH_ADDR_SPACE, 0, &ops);
-  reg_sim_stat (eth_status, dat);
-  reg_sim_reset (eth_reset, dat);
+  reg_mem_area (sim, eth->baseaddr, ETH_ADDR_SPACE, 0, &ops);
+  reg_sim_stat (sim, eth_status, dat);
+  reg_sim_reset (sim, eth_reset, dat);
 }
 
 
@@ -1548,10 +1549,10 @@ eth_sec_end (void *dat)
 /*!Register a new Ethernet configuration                                     */
 /*---------------------------------------------------------------------------*/
 void
-reg_ethernet_sec ()
+reg_ethernet_sec (or1ksim *sim)
 {
   struct config_section *sec =
-    reg_config_sec ("ethernet", eth_sec_start, eth_sec_end);
+    reg_config_sec (sim, "ethernet", eth_sec_start, eth_sec_end);
 
   reg_config_param (sec, "enabled",    paramt_int,  eth_enabled);
   reg_config_param (sec, "baseaddr",   paramt_addr, eth_baseaddr);

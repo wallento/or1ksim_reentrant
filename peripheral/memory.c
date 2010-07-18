@@ -1,8 +1,9 @@
 /* memory.c -- Generic memory model
 
    Copyright (C) 1999 Damjan Lampret, lampret@opencores.org
-   Copyright (C) 2005 György `nog' Jeney, nog@sdf.lonestar.org
+   Copyright (C) 2005 GyÃ¶rgy `nog' Jeney, nog@sdf.lonestar.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -68,13 +69,13 @@ struct mem_config
 };
 
 static uint32_t
-simmem_read32 (oraddr_t addr, void *dat)
+simmem_read32 (or1ksim *sim, oraddr_t addr, void *dat)
 {
   return *(uint32_t *) (dat + addr);
 }
 
 static uint16_t
-simmem_read16 (oraddr_t addr, void *dat)
+simmem_read16 (or1ksim *sim, oraddr_t addr, void *dat)
 {
 #ifdef WORDS_BIGENDIAN
   return *(uint16_t *) (dat + addr);
@@ -84,7 +85,7 @@ simmem_read16 (oraddr_t addr, void *dat)
 }
 
 static uint8_t
-simmem_read8 (oraddr_t addr, void *dat)
+simmem_read8 (or1ksim *sim, oraddr_t addr, void *dat)
 {
 #ifdef WORDS_BIGENDIAN
   return *(uint8_t *) (dat + addr);
@@ -94,13 +95,13 @@ simmem_read8 (oraddr_t addr, void *dat)
 }
 
 static void
-simmem_write32 (oraddr_t addr, uint32_t value, void *dat)
+simmem_write32 (or1ksim *sim, oraddr_t addr, uint32_t value, void *dat)
 {
   *(uint32_t *) (dat + addr) = value;
 }
 
 static void
-simmem_write16 (oraddr_t addr, uint16_t value, void *dat)
+simmem_write16 (or1ksim *sim, oraddr_t addr, uint16_t value, void *dat)
 {
 #ifdef WORDS_BIGENDIAN
   *(uint16_t *) (dat + addr) = value;
@@ -110,7 +111,7 @@ simmem_write16 (oraddr_t addr, uint16_t value, void *dat)
 }
 
 static void
-simmem_write8 (oraddr_t addr, uint8_t value, void *dat)
+simmem_write8 (or1ksim *sim, oraddr_t addr, uint8_t value, void *dat)
 {
 #ifdef WORDS_BIGENDIAN
   *(uint8_t *) (dat + addr) = value;
@@ -120,9 +121,9 @@ simmem_write8 (oraddr_t addr, uint8_t value, void *dat)
 }
 
 static uint32_t
-simmem_read_zero32 (oraddr_t addr, void *dat)
+simmem_read_zero32 (or1ksim *sim,oraddr_t addr, void *dat)
 {
-  if (config.sim.verbose)
+  if (sim->config.sim.verbose)
     fprintf (stderr,
 	     "WARNING: 32-bit memory read from non-read memory area 0x%"
 	     PRIxADDR ".\n", addr);
@@ -130,9 +131,9 @@ simmem_read_zero32 (oraddr_t addr, void *dat)
 }
 
 static uint16_t
-simmem_read_zero16 (oraddr_t addr, void *dat)
+simmem_read_zero16 (or1ksim *sim,oraddr_t addr, void *dat)
 {
-  if (config.sim.verbose)
+  if (sim->config.sim.verbose)
     fprintf (stderr,
 	     "WARNING: 16-bit memory read from non-read memory area 0x%"
 	     PRIxADDR ".\n", addr);
@@ -140,9 +141,9 @@ simmem_read_zero16 (oraddr_t addr, void *dat)
 }
 
 static uint8_t
-simmem_read_zero8 (oraddr_t addr, void *dat)
+simmem_read_zero8 (or1ksim *sim,oraddr_t addr, void *dat)
 {
-  if (config.sim.verbose)
+  if (sim->config.sim.verbose)
     fprintf (stderr,
 	     "WARNING: 8-bit memory read from non-read memory area 0x%"
 	     PRIxADDR ".\n", addr);
@@ -150,34 +151,34 @@ simmem_read_zero8 (oraddr_t addr, void *dat)
 }
 
 static void
-simmem_write_null32 (oraddr_t addr, uint32_t value, void *dat)
+simmem_write_null32 (or1ksim *sim,oraddr_t addr, uint32_t value, void *dat)
 {
-  if (config.sim.verbose)
+  if (sim->config.sim.verbose)
     fprintf (stderr,
 	     "WARNING: 32-bit memory write to 0x%" PRIxADDR ", non-write "
 	     "memory area (value 0x%08" PRIx32 ").\n", addr, value);
 }
 
 static void
-simmem_write_null16 (oraddr_t addr, uint16_t value, void *dat)
+simmem_write_null16 (or1ksim *sim,oraddr_t addr, uint16_t value, void *dat)
 {
-  if (config.sim.verbose)
+  if (sim->config.sim.verbose)
     fprintf (stderr,
 	     "WARNING: 16-bit memory write to 0x%" PRIxADDR ", non-write "
 	     "memory area (value 0x%08" PRIx16 ").\n", addr, value);
 }
 
 static void
-simmem_write_null8 (oraddr_t addr, uint8_t value, void *dat)
+simmem_write_null8 (or1ksim *sim,oraddr_t addr, uint8_t value, void *dat)
 {
-  if (config.sim.verbose)
+  if (sim->config.sim.verbose)
     fprintf (stderr,
 	     "WARNING: 8-bit memory write to 0x%" PRIxADDR ", non-write "
 	     "memory area (value 0x%08" PRIx8 ").\n", addr, value);
 }
 
 static void
-mem_reset (void *dat)
+mem_reset (or1ksim *sim, void *dat)
 {
   struct mem_config *mem = dat;
   int seed;
@@ -215,7 +216,7 @@ mem_reset (void *dat)
 
 /*-------------------------------------------------[ Memory configuration ]---*/
 static void
-memory_random_seed (union param_val val, void *dat)
+memory_random_seed (or1ksim *sim,union param_val val, void *dat)
 {
   struct mem_config *mem = dat;
   mem->random_seed = val.int_val;
@@ -230,7 +231,7 @@ memory_random_seed (union param_val val, void *dat)
    @param[in] dat  The config data structure                                 */
 /*---------------------------------------------------------------------------*/
 static void
-memory_pattern (union param_val val, void *dat)
+memory_pattern (or1ksim *sim,union param_val val, void *dat)
 {
   struct mem_config *mem = dat;
 
@@ -254,7 +255,7 @@ memory_pattern (union param_val val, void *dat)
    @param[in] dat  The config data structure                                 */
 /*---------------------------------------------------------------------------*/
 static void
-memory_type (union param_val val, void *dat)
+memory_type (or1ksim *sim,union param_val val, void *dat)
 {
   struct mem_config *mem = dat;
 
@@ -283,28 +284,28 @@ memory_type (union param_val val, void *dat)
 
 
 static void
-memory_ce (union param_val val, void *dat)
+memory_ce (or1ksim *sim,union param_val val, void *dat)
 {
   struct mem_config *mem = dat;
   mem->ce = val.int_val;
 }
 
 static void
-memory_mc (union param_val val, void *dat)
+memory_mc (or1ksim *sim,union param_val val, void *dat)
 {
   struct mem_config *mem = dat;
   mem->mc = val.int_val;
 }
 
 static void
-memory_baseaddr (union param_val val, void *dat)
+memory_baseaddr (or1ksim *sim,union param_val val, void *dat)
 {
   struct mem_config *mem = dat;
   mem->baseaddr = val.addr_val;
 }
 
 static void
-memory_size (union param_val val, void *dat)
+memory_size (or1ksim *sim,union param_val val, void *dat)
 {
   struct mem_config *mem = dat;
   mem->size = val.int_val;
@@ -312,7 +313,7 @@ memory_size (union param_val val, void *dat)
 
 /* FIXME: Check use */
 static void
-memory_name (union param_val val, void *dat)
+memory_name (or1ksim *sim,union param_val val, void *dat)
 {
   struct mem_config *mem = dat;
 
@@ -325,21 +326,21 @@ memory_name (union param_val val, void *dat)
 }
 
 static void
-memory_log (union param_val val, void *dat)
+memory_log (or1ksim *sim,union param_val val, void *dat)
 {
   struct mem_config *mem = dat;
   mem->log = strdup (val.str_val);
 }
 
 static void
-memory_delayr (union param_val val, void *dat)
+memory_delayr (or1ksim *sim,union param_val val, void *dat)
 {
   struct mem_config *mem = dat;
   mem->delayr = val.int_val;
 }
 
 static void
-memory_delayw (union param_val val, void *dat)
+memory_delayw (or1ksim *sim,union param_val val, void *dat)
 {
   struct mem_config *mem = dat;
   mem->delayw = val.int_val;
@@ -381,7 +382,7 @@ memory_sec_start ()
 
 
 static void
-memory_sec_end (void *dat)
+memory_sec_end (or1ksim *sim,void *dat)
 {
   struct mem_config *mem = dat;
   struct dev_memarea *mema;
@@ -453,22 +454,22 @@ memory_sec_end (void *dat)
 
   ops.log = mem->log;
 
-  mema = reg_mem_area (mem->baseaddr, mem->size, 0, &ops);
+  mema = reg_mem_area (sim, mem->baseaddr, mem->size, 0, &ops);
 
   /* Set valid */
   /* FIXME: Should this be done during reset? */
   set_mem_valid (mema, 1);
 
   if (mem->ce >= 0)
-    mc_reg_mem_area (mema, mem->ce, mem->mc);
+    mc_reg_mem_area (sim, mema, mem->ce, mem->mc);
 
-  reg_sim_reset (mem_reset, dat);
+  reg_sim_reset (sim, mem_reset, dat);
 }
 
 void
-reg_memory_sec (void)
+reg_memory_sec (or1ksim *sim)
 {
-  struct config_section *sec = reg_config_sec ("memory", memory_sec_start,
+  struct config_section *sec = reg_config_sec (sim, "memory", memory_sec_start,
 					       memory_sec_end);
 
   reg_config_param (sec, "type", paramt_word, memory_type);

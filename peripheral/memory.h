@@ -1,6 +1,7 @@
 /* memory.h -- Generic memory model header
 
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -26,6 +27,6 @@
 #ifndef MEMORY__H
 #define MEMORY__H
 
-extern void  reg_memory_sec ();
+extern void  reg_memory_sec (or1ksim *sim);
 
 #endif  /* MEMORY__H */

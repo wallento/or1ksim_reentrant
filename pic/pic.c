@@ -2,6 +2,7 @@
 
    Copyright (C) 1999 Damjan Lampret, lampret@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
   
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
   
@@ -45,37 +46,31 @@
 #include "sched.h"
 
 
-/* FIXME: This ugly hack will be removed once the bus architecture gets written
- */
-struct pic pic_state_int = { 1, 1 };
-
-struct pic *pic_state = &pic_state_int;
-
 /* Reset. It initializes PIC registers. */
 void
-pic_reset (void)
+pic_reset (or1ksim *sim)
 {
   PRINTF ("Resetting PIC.\n");
-  cpu_state.sprs[SPR_PICMR] = 0;
-  cpu_state.sprs[SPR_PICPR] = 0;
-  cpu_state.sprs[SPR_PICSR] = 0;
+  sim->cpu_state.sprs[SPR_PICMR] = 0;
+  sim->cpu_state.sprs[SPR_PICPR] = 0;
+  sim->cpu_state.sprs[SPR_PICSR] = 0;
 }
 
 /* Handles the reporting of an interrupt if it had to be delayed */
 static void
-pic_rep_int (void *dat)
+pic_rep_int (or1ksim *sim,void *dat)
 {
-  if (cpu_state.sprs[SPR_PICSR])
+  if (sim->cpu_state.sprs[SPR_PICSR])
     {
-      except_handle (EXCEPT_INT, cpu_state.sprs[SPR_EEAR_BASE]);
+      except_handle (sim,EXCEPT_INT, sim->cpu_state.sprs[SPR_EEAR_BASE]);
     }
 }
 
 /* Called whenever interrupts get enabled */
 void
-pic_ints_en (void)
+pic_ints_en (or1ksim *sim)
 {
-  if ((cpu_state.sprs[SPR_PICMR] & cpu_state.sprs[SPR_PICSR]))
+  if ((sim->cpu_state.sprs[SPR_PICMR] & sim->cpu_state.sprs[SPR_PICSR]))
     SCHED_ADD (pic_rep_int, NULL, 0);
 }
 
@@ -84,44 +79,44 @@ pic_ints_en (void)
  * write mem callback), the interrupt will be delivered after the instruction
  * has finished executeing */
 void
-report_interrupt (int line)
+report_interrupt (or1ksim *sim,int line)
 {
   uint32_t lmask = 1 << line;
 
   /* Disable doze and sleep mode */
-  cpu_state.sprs[SPR_PMR] &= ~(SPR_PMR_DME | SPR_PMR_SME);
+  sim->cpu_state.sprs[SPR_PMR] &= ~(SPR_PMR_DME | SPR_PMR_SME);
 
   /* If PIC is disabled, don't set any register, just raise EXCEPT_INT */
-  if (!config.pic.enabled)
+  if (!sim->config.pic.enabled)
     {
-      if (cpu_state.sprs[SPR_SR] & SPR_SR_IEE)
-	except_handle (EXCEPT_INT, cpu_state.sprs[SPR_EEAR_BASE]);
+      if (sim->cpu_state.sprs[SPR_SR] & SPR_SR_IEE)
+	except_handle (sim, EXCEPT_INT, sim->cpu_state.sprs[SPR_EEAR_BASE]);
       return;
     }
 
-  if (cpu_state.pic_lines & lmask)
+  if (sim->cpu_state.pic_lines & lmask)
     {
       /* No edge occured, warn about performance penalty and exit */
       fprintf (stderr, "Warning: Int line %d did not change state\n", line);
       return;
     }
 
-  cpu_state.pic_lines |= lmask;
-  cpu_state.sprs[SPR_PICSR] |= lmask;
+  sim->cpu_state.pic_lines |= lmask;
+  sim->cpu_state.sprs[SPR_PICSR] |= lmask;
 
-  if ((cpu_state.sprs[SPR_PICMR] & lmask) || line < 2)
-    if (cpu_state.sprs[SPR_SR] & SPR_SR_IEE)
+  if ((sim->cpu_state.sprs[SPR_PICMR] & lmask) || line < 2)
+    if (sim->cpu_state.sprs[SPR_SR] & SPR_SR_IEE)
       SCHED_ADD (pic_rep_int, NULL, 0);
 }
 
 /* Clears an int on a pic line */
 void
-clear_interrupt (int line)
+clear_interrupt (or1ksim *sim,int line)
 {
-  cpu_state.pic_lines &= ~(1 << line);
+  sim->cpu_state.pic_lines &= ~(1 << line);
 
-  if (!config.pic.edge_trigger)
-    cpu_state.sprs[SPR_PICSR] &= ~(1 << line);
+  if (!sim->config.pic.edge_trigger)
+    sim->cpu_state.sprs[SPR_PICSR] &= ~(1 << line);
 }
 
 /*----------------------------------------------------[ PIC configuration ]---*/
@@ -136,19 +131,19 @@ clear_interrupt (int line)
    @param[in] dat  The config data structure (not used here)                 */
 /*---------------------------------------------------------------------------*/
 static void
-pic_enabled (union param_val  val,
+pic_enabled (or1ksim *sim,union param_val  val,
 	     void            *dat)
 {
   if (val.int_val)
     {
-      cpu_state.sprs[SPR_UPR] |= SPR_UPR_PICP;
+      sim->cpu_state.sprs[SPR_UPR] |= SPR_UPR_PICP;
     }
   else
     {
-      cpu_state.sprs[SPR_UPR] &= ~SPR_UPR_PICP;
+      sim->cpu_state.sprs[SPR_UPR] &= ~SPR_UPR_PICP;
     }
 
-  config.pic.enabled = val.int_val;
+  sim->config.pic.enabled = val.int_val;
 
 }	/* pic_enabled() */
 
@@ -160,10 +155,10 @@ pic_enabled (union param_val  val,
    @param[in] dat  The config data structure (not used here)                 */
 /*---------------------------------------------------------------------------*/
 static void
-pic_edge_trigger (union param_val  val,
+pic_edge_trigger (or1ksim *sim,union param_val  val,
 		  void            *dat)
 {
-  config.pic.edge_trigger = val.int_val;
+  sim->config.pic.edge_trigger = val.int_val;
 
 }	/* pic_edge_trigger() */
 
@@ -174,9 +169,9 @@ pic_edge_trigger (union param_val  val,
    ALL parameters are set explicitly to default values in init_defconfig()   */
 /*---------------------------------------------------------------------------*/
 void
-reg_pic_sec ()
+reg_pic_sec (or1ksim *sim)
 {
-  struct config_section *sec = reg_config_sec ("pic", NULL, NULL);
+  struct config_section *sec = reg_config_sec (sim, "pic", NULL, NULL);
 
   reg_config_param (sec, "enabled",      paramt_int, pic_enabled);
   reg_config_param (sec, "edge_trigger", paramt_int, pic_edge_trigger);

@@ -2,6 +2,7 @@
 
    Copyright (C) 2005 György `nog' Jeney, nog@sdf.lonestar.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
   
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
   
@@ -35,7 +36,7 @@
 
 
 /* Function prototypes for external use */
-extern char *dump_spr (uint16_t  spr,
+extern char *dump_spr (or1ksim *sim, uint16_t  spr,
 		       uorreg_t  spr_val);
 
 #endif	/* SPR_DUMP__H */

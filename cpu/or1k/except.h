@@ -2,6 +2,7 @@
 
    Copyright (C) 1999 Damjan Lampret, lampret@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -30,6 +31,7 @@
 
 /* Package includes */
 #include "arch.h"
+#include "siminstance.h"
 
 /* Definition of OR1K exceptions */
 #define EXCEPT_NONE     0x0000
@@ -49,7 +51,6 @@
 #define EXCEPT_TRAP	0x0e00
 
 /* Function prototypes for external use */
-extern void except_handle (oraddr_t except, oraddr_t ea);
-extern int except_pending;
+extern void except_handle (or1ksim *sim,oraddr_t except, oraddr_t ea);
 
 #endif /* EXCEPT__H */

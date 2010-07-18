@@ -2,6 +2,7 @@
 
    Copyright (C) 2002 Marko Mlinar, markom@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -27,8 +28,10 @@
 #ifndef MPROFILER__H
 #define MPROFILER__H
 
+#include "siminstance.h"
+
 /* Function prototypes for external use */
-extern int main_mprofiler (int   argc,
+extern int main_mprofiler (or1ksim* sim, int   argc,
 			   char *argv[],
 			   int   just_help);
 

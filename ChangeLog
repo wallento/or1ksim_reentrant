@@ -1,3 +1,48 @@
+2009-03-26  Stefan Wallentowitz <stefan.wallentowitz@tum.de>
+    * siminstance.h: Created structure that holds all former global variables.
+    * defines.h, types.h: Moved all types and defines referenced by or1ksim here.
+    * Makefile.am: Some additional headers are required to be installed.
+    * libtoplevel.c: The calls to the functions now require the or1ksim instance
+       as first parameter. or1ksim_instance added to allocate and populate an instance.
+    * or1ksim.h: Applied new calling with instance parameter to the functions.
+    * toplevel.c, toplevel-mprofile.c, toplevel-profile.c: At begin of the main function
+       a simulator instance is created. Fixing of access and calling.
+    * toplevel-support.c, or1ksim/toplevel-support.h: Added a data structure to manage
+       all running simulator instances. With sim_register and sim_unregister simulator
+       instances are added. This is mutex protected. The handling of crtl+c uses this
+       struct, but can only handle the first instance.
+    * branch-predict.c, bpb/branch-predict.h, cache/dcache-model.c, cache/dcache-model.h,
+      cache/icache-model.c, cache/icache-model.h, cpu/common/abstract.c, 
+      cpu/common/abstract.h, cpu/common/execute.h, cpu/common/labels.c, 
+      cpu/common/labels.h, cpu/common/parse.c, cpu/common/parse.h, cpu/common/stats.c,
+      cpu/common/stats.h, cpu/common/trace.c, cpu/common/trace.h, cpu/or1k/arch.h,
+      cpu/or1k/except.c, cpu/or1k/except.h, cpu/or1k/opcode/or32.h, cpu/or1k/spr-defs.h,
+      cpu/or1k/spr-dump.c, cpu/or1k/spr-dump.h, cpu/or1k/sprs.c, cpu/or1k/sprs.h,
+      cpu/or32/execute.c, cpu/or32/generate.c, cpu/or32/insnset.c, cpu/or32/or32.c,
+      cpu-config.c, cpu-config.h, cuc/adv.c, cuc/bb.c, cuc/cuc.c, cuc/cuc.h, cuc/insn.c,
+      cuc/insn.h, cuc/load.c, cuc/memory.c, cuc/timings.c, cuc/verilog.c,
+      debug/debug-unit.c, debug/debug-unit.h, debug/gdbcomm.c, debug/gdbcomm.h,
+      debug/rsp-server.c, mmu/dmmu.c, mmu/dmmu.h, mmu/immu.c, mmu/immu.h, 
+      peripheral/16450.c, peripheral/16450.h, peripheral/atadevice.c,
+      peripheral/atadevice-cmdi.c, peripheral/atadevice-cmdi.h, peripheral/atadevice.h,
+      peripheral/atahost.c, peripheral/atahost.h, peripheral/channels/channel.c,
+      peripheral/channels/channel.h, peripheral/channels/fd.c, peripheral/channels/fd.h,
+      peripheral/channels/file.c, peripheral/channels/file.h, peripheral/channels/tcp.c,
+      peripheral/channels/tcp.h, peripheral/channels/tty.c, peripheral/channels/tty.h,
+      peripheral/channels/xterm.c, peripheral/channels/xterm.h, peripheral/crc32.c,
+      peripheral/dma.c, peripheral/dma.h, peripheral/eth.c, peripheral/eth.h, 
+      peripheral/fb.c, peripheral/fb.h, peripheral/generic.c, peripheral/generic.h,
+      peripheral/gpio.c, peripheral/gpio.h, peripheral/mc.c, peripheral/mc.h,
+      peripheral/memory.c, peripheral/memory.h, peripheral/ps2kbd.c, peripheral/ps2kbd.h,
+      peripheral/vga.c, peripheral/vga.h, pic/pic.c, pic/pic.h, pm/pm.c, pm/pm.h,
+      support/debug.c, support/debug.h, support/dumpverilog.c, support/dumpverilog.h,
+      support/profile.c, support/profile.h, support/sched.c, support/sched.h, 
+      support/simprintf.c, tick/tick.c, or1ksim/tick/tick.h, vapi/vapi.c, vapi/vapi.h,
+      sim-cmd.c, sim-cmd.h, sim-config.c, sim-config.h, profiler.c, profiler.h,
+      mprofiler.c, mprofiler.h: Added simulator instance as first parameter of functions
+       where necessary and replaced all accesses to the global variables by the
+       corresponding element of the structure.    
+
 2009-03-02  Jeremy Bennett <jeremy.bennett@embecosm.com>
 	* README: Reference to installation instructions updated
 	* NEWS: Updated for release 0.3.0

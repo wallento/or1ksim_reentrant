@@ -1,5 +1,6 @@
 /* bb.c -- OpenRISC Custom Unit Compiler, Basic Block handling
  *    Copyright (C) 2002 Marko Mlinar, markom@opencores.org
+ *    Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
  *
  *    This file is part of OpenRISC 1000 Architectural Simulator.
  *
@@ -33,7 +34,7 @@
 #include "support/profile.h"
 
 /* prints out bb string */
-void print_bb_num (int num)
+void print_bb_num (or1ksim *sim, int num)
 {
   if (num < 0) PRINTF ("*");
   else if (num == BBID_END) PRINTF ("END");
@@ -42,7 +43,7 @@ void print_bb_num (int num)
 }
 
 /* Print out basic blocks */
-void print_cuc_bb (cuc_func *f, char *s)
+void print_cuc_bb (or1ksim *sim, cuc_func *f, char *s)
 {
   int i;
   PRINTF ("------- %s -------\n", s);
@@ -50,13 +51,13 @@ void print_cuc_bb (cuc_func *f, char *s)
     if (f->bb[i].insn) PRINTF ("\n---- BB%-2x * %x ---- ", i, f->bb[i].cnt);
     else PRINTF ("BB%-2x: %4x-%-4x", i, f->bb[i].first, f->bb[i].last);
     PRINTF (" type %02lx tmp %i ", f->bb[i].type, f->bb[i].tmp);
-    PRINTF ("next "); print_bb_num (f->bb[i].next[0]);
-    PRINTF (" "); print_bb_num (f->bb[i].next[1]);
-    PRINTF (" prev "); print_bb_num (f->bb[i].prev[0]);
-    PRINTF (" "); print_bb_num (f->bb[i].prev[1]);
+    PRINTF ("next "); print_bb_num (sim, f->bb[i].next[0]);
+    PRINTF (" "); print_bb_num (sim, f->bb[i].next[1]);
+    PRINTF (" prev "); print_bb_num (sim, f->bb[i].prev[0]);
+    PRINTF (" "); print_bb_num (sim, f->bb[i].prev[1]);
     PRINTF ("\n");
-    
-    if (f->bb[i].insn) print_insns (i, f->bb[i].insn, f->bb[i].ninsn, 0);
+
+    if (f->bb[i].insn) print_insns (sim, i, f->bb[i].insn, f->bb[i].ninsn, 0);
   }
   if (f->nmsched) {
     PRINTF ("\nmsched: ");
@@ -84,7 +85,7 @@ void cpy_bb (cuc_bb *dest, cuc_bb *src)
       d = d->next;
     }
   }
-  
+
   d = src->mdep;
   dest->mdep = NULL;
   while (d) {
@@ -157,13 +158,13 @@ void recalc_last_used_reg (cuc_func *f, int b)
 {
   int i;
   cuc_bb *bb = &f->bb[b];
-  
+
   /* rebuild last used reg array */
   if (bb->insn[0].index == II_LRBB) bb->last_used_reg[LRBB_REG] = 0;
   else bb->last_used_reg[LRBB_REG] = -1;
 
   for (i = 1; i < MAX_REGS - 1; i++) bb->last_used_reg[i] = -1;
-    
+
     /* Create references */
   for (i = 0; i < bb->ninsn; i++) {
     int k;
@@ -177,38 +178,38 @@ void recalc_last_used_reg (cuc_func *f, int b)
 }
 
 /* Set the BB limits */
-void detect_bb (cuc_func *f)
+void detect_bb (or1ksim *sim, cuc_func *f)
 {
   int i, j, end_bb = 0, eb = 0;
 
   /* Mark block starts/ends */
-  for (i = 0; i < num_insn; i++) {
-    if (end_bb) insn[i].type |= IT_BBSTART;
+  for (i = 0; i < sim->num_insn; i++) {
+    if (end_bb) sim->insn[i].type |= IT_BBSTART;
     end_bb = 0;
-    if (insn[i].type & IT_BRANCH) {
-      int jt = insn[i].op[0];
-      insn[i].type |= IT_BBEND;
+    if (sim->insn[i].type & IT_BRANCH) {
+      int jt = sim->insn[i].op[0];
+      sim->insn[i].type |= IT_BBEND;
       end_bb = 1;
-      if (jt < 0 || jt >= num_insn) {
-	fprintf (stderr, "Instruction #%i:Jump out of function '%s'.\n", i, insn[i].disasm);
+      if (jt < 0 || jt >= sim->num_insn) {
+	fprintf (stderr, "Instruction #%i:Jump out of function '%s'.\n", i, sim->insn[i].disasm);
 	exit (1);
       }
-      if (jt > 0) insn[jt - 1].type |= IT_BBEND;
-      insn[jt].type |= IT_BBSTART;
+      if (jt > 0) sim->insn[jt - 1].type |= IT_BBEND;
+      sim->insn[jt].type |= IT_BBSTART;
     }
   }
 
   /* Initialize bb array */
-  insn[0].type |= IT_BBSTART;
-  insn[num_insn - 1].type |= IT_BBEND;
+  sim->insn[0].type |= IT_BBSTART;
+  sim->insn[sim->num_insn - 1].type |= IT_BBEND;
   f->num_bb = 0;
-  for (i = 0; i < num_insn; i++) {
-    if (insn[i].type & IT_BBSTART) {
+  for (i = 0; i < sim->num_insn; i++) {
+    if (sim->insn[i].type & IT_BBSTART) {
       f->bb[f->num_bb].first = i;
       f->bb[f->num_bb].cnt = 0;
     }
     /* Determine repetitions of a loop */
-    if (insn[i].type & IT_BBEND) {
+    if (sim->insn[i].type & IT_BBEND) {
       f->bb[f->num_bb].type = 0;
       f->bb[f->num_bb].last = i;
       f->bb[f->num_bb].next[0] = f->bb[f->num_bb].next[1] = -1;
@@ -218,33 +219,33 @@ void detect_bb (cuc_func *f)
       assert (f->num_bb < MAX_BB);
     }
   }
-  if (cuc_debug >= 3) print_cuc_bb (f, "AFTER_INIT");
+  if (sim->cuc_debug >= 3) print_cuc_bb (sim, f, "AFTER_INIT");
 
   /* Build forward connections between BBs */
   for (i = 0; i < f->num_bb; i++)
-    if (insn[f->bb[i].last].type & IT_BRANCH) {
+    if (sim->insn[f->bb[i].last].type & IT_BRANCH) {
       int j;
-      assert (insn[f->bb[i].last].index == II_BF);
+      assert (sim->insn[f->bb[i].last].index == II_BF);
       /* Find block this instruction jumps to */
       for (j = 0; j < f->num_bb; j++)
-        if (f->bb[j].first == insn[f->bb[i].last].op[0]) break;
+        if (f->bb[j].first == sim->insn[f->bb[i].last].op[0]) break;
       assert (j < f->num_bb);
-      
+
       /* Convert the jump address to BB link */
-      insn[f->bb[i].last].op[0] = j; insn[f->bb[i].last].opt[0] = OPT_BB;
+      sim->insn[f->bb[i].last].op[0] = j; sim->insn[f->bb[i].last].opt[0] = OPT_BB;
 
       /* Make a link */
       f->bb[i].next[0] = j;
       if (++f->bb[j].tmp > 2) eb++;
       f->bb[i].next[1] = i + 1;
       if (++f->bb[i + 1].tmp > 2) eb++;
-    } else if (f->bb[i].last == num_insn - 1) { /* Last instruction doesn't have to do anything */
+    } else if (f->bb[i].last == sim->num_insn - 1) { /* Last instruction doesn't have to do anything */
     } else {
       f->bb[i].next[0] = i + 1;
       if (++f->bb[i + 1].tmp > 2) eb++;
     }
-  
-  if (cuc_debug >= 3) print_cuc_bb (f, "AFTER_NEXT");
+
+  if (sim->cuc_debug >= 3) print_cuc_bb (sim, f, "AFTER_NEXT");
 
   /* Build backward connections, but first insert artificial blocks
    * to handle more than 2 connections */
@@ -254,7 +255,7 @@ void detect_bb (cuc_func *f)
     j = f->bb[i].tmp;
     if (f->bb[i].tmp > 2) f->bb[i].tmp = -f->bb[i].tmp;
     f->bb[--end_bb] = f->bb[i];
-    reloc[i] = end_bb;
+    sim->reloc[i] = end_bb;
     while (j-- > 2) {
       f->bb[--end_bb].first = f->bb[i].first;
       f->bb[end_bb].last = -1;
@@ -268,14 +269,14 @@ void detect_bb (cuc_func *f)
   f->num_bb += eb;
 
   /* relocate jump instructions */
-  for (i = 0; i < num_insn; i++)
+  for (i = 0; i < sim->num_insn; i++)
     for (j = 0; j < MAX_OPERANDS; j++)
-      if (insn[i].opt[j] & OPT_BB)
-        insn[i].op[j] = reloc[insn[i].op[j]];
-  if (cuc_debug >= 3) print_cuc_bb (f, "AFTER_INSERT-reloc");
+      if (sim->insn[i].opt[j] & OPT_BB)
+        sim->insn[i].op[j] = sim->reloc[sim->insn[i].op[j]];
+  if (sim->cuc_debug >= 3) print_cuc_bb (sim, f, "AFTER_INSERT-reloc");
   for (i = 0; i < f->num_bb; i++) {
     if (f->bb[i].next[0] >= 0) {
-      int t = reloc[f->bb[i].next[0]];
+      int t = sim->reloc[f->bb[i].next[0]];
       if (f->bb[t].tmp < 0) {
         f->bb[t].tmp = -f->bb[t].tmp;
         t -= f->bb[t].tmp - 2;
@@ -283,7 +284,7 @@ void detect_bb (cuc_func *f)
       f->bb[i].next[0] = t;
     }
     if (f->bb[i].next[1] >= 0) {
-      int t = reloc[f->bb[i].next[1]];
+      int t = sim->reloc[f->bb[i].next[1]];
       if (f->bb[t].tmp < 0) {
         f->bb[t].tmp = -f->bb[t].tmp;
         t -= f->bb[t].tmp - 2;
@@ -291,15 +292,15 @@ void detect_bb (cuc_func *f)
       f->bb[i].next[1] = t;
     }
     /* artificial blocks do not have relocations, hardcode them */
-    if (f->bb[i].last < 0) f->bb[i].next[0] = i + 1;    
+    if (f->bb[i].last < 0) f->bb[i].next[0] = i + 1;
   }
-  if (cuc_debug >= 3) print_cuc_bb (f, "AFTER_INSERT");
+  if (sim->cuc_debug >= 3) print_cuc_bb (sim, f, "AFTER_INSERT");
 
   /* Uncoditional branched do not continue to next block */
   for (i = 0; i < f->num_bb; i++) {
     cuc_insn *ii;
     if (f->bb[i].last < 0) continue;
-    ii = &insn[f->bb[i].last];
+    ii = &sim->insn[f->bb[i].last];
     /* Unconditional branch? */
     if (ii->type & IT_BRANCH && ii->opt[1] & OPT_CONST) {
       change_insn_type (ii, II_NOP);
@@ -309,7 +310,7 @@ void detect_bb (cuc_func *f)
       f->bb[i].next[1] = -1;
     }
   }
-  if (cuc_debug >= 3) print_cuc_bb (f, "AFTER_UNCOND_JUMP");
+  if (sim->cuc_debug >= 3) print_cuc_bb (sim, f, "AFTER_UNCOND_JUMP");
 
   /* Add backward connections */
   for (i = 0; i < f->num_bb; i++)
@@ -341,11 +342,11 @@ void detect_bb (cuc_func *f)
   assert (f->bb[f->num_bb - 1].next[0] < 0);
   assert (f->bb[f->num_bb - 1].next[1] < 0);
   f->bb[f->num_bb - 1].next[0] = BBID_END;
-  if (cuc_debug >= 3) print_cuc_bb (f, "AFTER_PREV");
+  if (sim->cuc_debug >= 3) print_cuc_bb (sim, f, "AFTER_PREV");
 }
 
 /* We do a quick check if there are some anomalies with references */
-void cuc_check (cuc_func *f)
+void cuc_check (or1ksim *sim, cuc_func *f)
 {
   int i, j = 0, k = 0;
   cucdebug (1, "cuc_check\n");
@@ -382,13 +383,13 @@ void cuc_check (cuc_func *f)
   return;
 err:
   cucdebug (1, "Anomaly detected at [%x_%x].%i\n", i, j, k);
-  print_cuc_bb (f, "ANOMALY");
+  print_cuc_bb (sim, f, "ANOMALY");
   cucdebug (1, "Anomaly detected at [%x_%x].%i\n", i, j, k);
   exit (1);
 }
 
 /* Build basic blocks */
-void build_bb (cuc_func *f)
+void build_bb (or1ksim *sim, cuc_func *f)
 {
   int i, j, k;
   for (i = 0; i < f->num_bb; i++) {
@@ -418,10 +419,10 @@ void build_bb (cuc_func *f)
       f->bb[i].insn[j].op[0] = f->bb[i].insn[j].op[1] = f->bb[i].insn[j].op[2] = j;
       f->bb[i].insn[j].op[3] = LRBB_REG; f->bb[i].insn[j].opt[3] = OPT_REGISTER;
     }
-    
+
     /* Relocate instructions */
     for (j = MAX_REGS - 1; j < f->bb[i].ninsn; j++) {
-      f->bb[i].insn[j] = insn[f->bb[i].first + j - (MAX_REGS - 1)];
+      f->bb[i].insn[j] = sim->insn[f->bb[i].first + j - (MAX_REGS - 1)];
       for (k = 0; k < MAX_OPERANDS; k++)
         if (f->bb[i].insn[j].opt[k] & OPT_REF) {
           int b1;
@@ -434,16 +435,16 @@ void build_bb (cuc_func *f)
       if (f->bb[i].insn[j].type & IT_MEMORY) f->bb[i].nmemory++;
     }
   }
-  cuc_check (f);
+  cuc_check (sim, f);
 }
 
 /* Does simplification on blocks A, B, C:
    A->B->C, A->C to just A->B->C */
-static void simplify_bb (cuc_func *f, int pred, int s1, int s2, int neg)
+static void simplify_bb (or1ksim *sim, cuc_func *f, int pred, int s1, int s2, int neg)
 {
   cuc_insn *last;
   int i;
-  if (cuc_debug >= 3) print_cuc_bb (f, "BEFORE_SIMPLIFY");
+  if (sim->cuc_debug >= 3) print_cuc_bb (sim, f, "BEFORE_SIMPLIFY");
   cucdebug (3, "simplify %x->%x->%x (%i)\n", pred, s1, s2, neg);
   assert (s2 != pred); /* Shouldn't occur => stupid */
   f->bb[pred].next[1] = -1;
@@ -455,7 +456,7 @@ static void simplify_bb (cuc_func *f, int pred, int s1, int s2, int neg)
   } else if (f->bb[s2].prev[1] == pred) {
     f->bb[s2].prev[1] = -1;
   } else assert (0);
-  
+
   last = &f->bb[pred].insn[f->bb[pred].ninsn - 1];
   assert (last->type & IT_BRANCH);
   for (i = 0; i < f->bb[s2].ninsn; i++) {
@@ -469,22 +470,22 @@ static void simplify_bb (cuc_func *f, int pred, int s1, int s2, int neg)
     }
   }
   change_insn_type (last, II_NOP);
-  if (cuc_debug >= 3) print_cuc_bb (f, "AFTER_SIMPLIFY");
+  if (sim->cuc_debug >= 3) print_cuc_bb (sim, f, "AFTER_SIMPLIFY");
 }
 
 /* type == 0; keep predecessor condition
  * type == 1; keep successor condition
  * type == 2; join loop unrolled blocks */
-static void join_bb (cuc_func *f, int pred, int succ, int type)
+static void join_bb (or1ksim *sim, cuc_func *f, int pred, int succ, int type)
 {
   int i, j, k, n1, n2, ninsn, add_cond = 0;
   unsigned long cond_op = 0, cond_opt = 0;
   cuc_insn *insn;
 
-  if (cuc_debug) cuc_check (f);
+  if (sim->cuc_debug) cuc_check (sim, f);
   cucdebug (3, "%x <= %x+%x (%i)\n", pred, pred, succ, type);
   cucdebug (3, "%x %x\n", f->bb[pred].ninsn, f->bb[succ].ninsn);
-  if (cuc_debug >= 3) fflush (stdout);
+  if (sim->cuc_debug >= 3) fflush (stdout);
 
   n1 = f->bb[pred].ninsn;
   n2 = f->bb[succ].ninsn;
@@ -494,7 +495,7 @@ static void join_bb (cuc_func *f, int pred, int succ, int type)
   if (type == 2) add_cond = 1;
 
   //assert (f->bb[pred].next[0] == f->bb[succ].next[0] || type != 2); /* not supported */
-  
+
   ninsn = n1 + n2 + (type == 1 ? 0 : 1) + (add_cond ? MAX_REGS : 0);
 
   insn = (cuc_insn *) malloc (ninsn * sizeof (cuc_insn));
@@ -506,7 +507,7 @@ static void join_bb (cuc_func *f, int pred, int succ, int type)
     insn[ninsn - 1] = insn[n1 - 1];
     cond_op = insn[n1 - 1].op[1];
     cond_opt = insn[n1 - 1].opt[1];
-    
+
     /* Remove old branch */
     change_insn_type (&insn[n1 - 1], II_NOP);
   }
@@ -538,8 +539,8 @@ static void join_bb (cuc_func *f, int pred, int succ, int type)
             now, having just one predecessor => LRBB is not needed anymore */
       if (f->bb[pred].prev[1] < 0) { /* handle second option */
         change_insn_type (&insn[n1], II_ADD);
-        insn[n1].op[1] = 1; insn[n1].opt[1] = OPT_CONST;        
-        insn[n1].op[2] = 0; insn[n1].opt[2] = OPT_CONST;        
+        insn[n1].op[1] = 1; insn[n1].opt[1] = OPT_CONST;
+        insn[n1].op[2] = 0; insn[n1].opt[2] = OPT_CONST;
         insn[n1].opt[3] = OPT_NONE;
       }
     } else {
@@ -564,14 +565,14 @@ static void join_bb (cuc_func *f, int pred, int succ, int type)
     }
   }
 #endif
-  
-  for (i = 0; i < ninsn; i++) reloc[i] = -1;
+
+  for (i = 0; i < ninsn; i++) sim->reloc[i] = -1;
 
   /* Add conditional instructions if required */
   if (add_cond) {
     recalc_last_used_reg (f, pred);
     recalc_last_used_reg (f, succ);
-    
+
     /* r0 -- add nop for it */
     change_insn_type (&insn[n1 + n2], II_NOP);
     for (i = 1; i < MAX_REGS; i++) {
@@ -593,7 +594,7 @@ static void join_bb (cuc_func *f, int pred, int succ, int type)
           ii->op[2] = cond_op; ii->opt[2] = cond_opt;
         }
         ii->op[3] = cond_op; ii->opt[3] = cond_opt;
-        reloc[REF_I(a)] = REF (pred, n1 + n2 + i);
+        sim->reloc[REF_I(a)] = REF (pred, n1 + n2 + i);
       } else if (b < 0) change_insn_type (ii, II_NOP);
       else if (a < 0) {
         change_insn_type (ii, II_ADD);
@@ -611,13 +612,13 @@ static void join_bb (cuc_func *f, int pred, int succ, int type)
         ii->op[1] = a; ii->opt[1] = OPT_REF;
         ii->op[2] = b; ii->opt[2] = OPT_REF;
         ii->op[3] = cond_op; ii->opt[3] = cond_opt;
-        reloc[REF_I(a)] = REF (pred, n1 + n2 + i);
+        sim->reloc[REF_I(a)] = REF (pred, n1 + n2 + i);
       }
       sprintf (ii->disasm, "cmov (join BB)");
     }
   }
-  
-  if (cuc_debug) cuc_check (f);
+
+  if (sim->cuc_debug) cuc_check (sim, f);
   i = 0;
   switch (type) {
   case 0:
@@ -667,7 +668,7 @@ static void join_bb (cuc_func *f, int pred, int succ, int type)
         lrbb->type |= IT_COND;
       }
   }
-  
+
   f->bb[succ].type = BB_DEAD;
   //PRINTF (" %x %x %x %x %x\n", f->bb[pred].next[0], f->bb[pred].next[1], f->bb[succ].next[0], f->bb[succ].next[1], insn[ninsn - 1].type);
   /* remove branch instruction, if there is only one successor */
@@ -700,19 +701,19 @@ static void join_bb (cuc_func *f, int pred, int succ, int type)
             /* We've found a reference to succ. block, being removed, relocate */
             f->bb[i].insn[j].op[k] = ndest;
           } else if (REF_BB(f->bb[i].insn[j].op[k]) == pred) {
-            if (i != pred && reloc[REF_I(f->bb[i].insn[j].op[k])] >= 0) {
-              f->bb[i].insn[j].op[k] = reloc[REF_I(f->bb[i].insn[j].op[k])];
+            if (i != pred && sim->reloc[REF_I(f->bb[i].insn[j].op[k])] >= 0) {
+              f->bb[i].insn[j].op[k] = sim->reloc[REF_I(f->bb[i].insn[j].op[k])];
             }
           }
         }
   }
-  
-  if (cuc_debug) cuc_check (f);
-  if (cuc_debug >= 3) print_cuc_bb (f, "join");
+
+  if (sim->cuc_debug) cuc_check (sim, f);
+  if (sim->cuc_debug >= 3) print_cuc_bb (sim, f, "join");
 }
 
 /* Optimize basic blocks */
-int optimize_bb (cuc_func *f)
+int optimize_bb (or1ksim *sim, cuc_func *f)
 {
   int modified = 0;
   int i, j;
@@ -734,7 +735,7 @@ remove_lrbb:
           modified = 1;
           if (f->bb[i].prev[0] != BBID_START && f->bb[f->bb[i].prev[0]].ninsn > 0) {
             t = &f->bb[f->bb[i].prev[0]].insn[f->bb[f->bb[i].prev[0]].ninsn - 1];
-          
+
             /* If the predecessor still has a conditional jump instruction, we must be careful.
                If next[0] == next[1] join them. Now we will link lrbb and correct the situation */
             if (t->type & IT_BRANCH) { /* We must set a reference to branch result */
@@ -747,7 +748,7 @@ remove_lrbb:
         }
     }
   }
-  
+
   /* Ordering of joining types is cruical -- we should concat all directly connected BBs
      together first, so when we do a type != 1 joining, we can remove LRBB, directly by
      looking at number of its predeccessors */
@@ -778,12 +779,12 @@ remove_lrbb:
         f->bb[i].prev[1] = -1;
       }
       assert (p >= 0 && f->bb[i].prev[1] < 0); /* one predecessor */
-      join_bb (f, p, i, 1);
+      join_bb (sim, f, p, i, 1);
       modified = 1;
       goto remove_lrbb;
     }
   }
-  
+
   /* Type 0 joining
      1. link between pred & succ
      2. no memory accesses in succ
@@ -794,7 +795,7 @@ remove_lrbb:
      && f->bb[i].prev[1] < 0 /* one predecessor */
      && f->bb[i].next[1] < 0 /* max. one successor */
      && f->bb[i].nmemory == 0) {                  /* and no memory acceses */
-      join_bb (f, f->bb[i].prev[0], i, 0);
+      join_bb (sim, f, f->bb[i].prev[0], i, 0);
       modified = 1;
       goto remove_lrbb;
     }
@@ -819,7 +820,7 @@ remove_lrbb:
       if (f->bb[p].next[1] == i
        && (f->bb[p].next[0] == f->bb[i].next[1]
         || f->bb[p].next[0] == f->bb[i].next[0])) {
-        join_bb (f, p, i, 2);
+        join_bb (sim, f, p, i, 2);
         modified = 1;
         goto remove_lrbb;
       }
@@ -848,26 +849,26 @@ remove_lrbb:
       /* Do the simplification if possible */
       if (f->bb[a].next[0] == b && f->bb[a].next[1] < 0
        && f->bb[a].nmemory == 0) {
-        simplify_bb (f, i, a, b, neg);
+        simplify_bb (sim, f, i, a, b, neg);
         modified = 1;
         goto remove_lrbb;
       }
     }
-    
+
   return modified;
 }
 
 /* Removes BBs marked as dead */
-int remove_dead_bb (cuc_func *f)
+int remove_dead_bb (or1ksim *sim, cuc_func *f)
 {
   int i, j, k, d = 0;
 
   for (i = 0; i < f->num_bb; i++) if (f->bb[i].type & BB_DEAD) {
     if (f->bb[i].insn) free (f->bb[i].insn);
     f->bb[i].insn = NULL;
-    reloc[i] = -1;
+    sim->reloc[i] = -1;
   } else {
-    reloc[i] = d;
+    sim->reloc[i] = d;
     f->bb[d++] = f->bb[i];
   }
   if (f->num_bb == d) return 0;
@@ -875,20 +876,20 @@ int remove_dead_bb (cuc_func *f)
 
   /* relocate initial blocks */
   for (i = 0; i < f->num_init_bb; i++)
-    f->init_bb_reloc[i] = reloc[f->init_bb_reloc[i]];
-  
+    f->init_bb_reloc[i] = sim->reloc[f->init_bb_reloc[i]];
+
   /* repair references */
   for (i = 0; i < f->num_bb; i++) if (!(f->bb[i].type & BB_DEAD)) {
           cucdebug (5, "%x %x %x %x %x\n", i, f->bb[i].prev[0], f->bb[i].prev[1], f->bb[i].next[0], f->bb[i].next[1]);
           fflush (stdout);
     if (f->bb[i].prev[0] >= 0 && f->bb[i].prev[0] != BBID_START)
-      assert ((f->bb[i].prev[0] = reloc[f->bb[i].prev[0]]) >= 0);
+      assert ((f->bb[i].prev[0] = sim->reloc[f->bb[i].prev[0]]) >= 0);
     if (f->bb[i].prev[1] >= 0 && f->bb[i].prev[1] != BBID_START)
-      assert ((f->bb[i].prev[1] = reloc[f->bb[i].prev[1]]) >= 0);
+      assert ((f->bb[i].prev[1] = sim->reloc[f->bb[i].prev[1]]) >= 0);
     if (f->bb[i].next[0] >= 0 && f->bb[i].next[0] != BBID_END)
-      assert ((f->bb[i].next[0] = reloc[f->bb[i].next[0]]) >= 0);
+      assert ((f->bb[i].next[0] = sim->reloc[f->bb[i].next[0]]) >= 0);
     if (f->bb[i].next[1] >= 0 && f->bb[i].next[1] != BBID_END)
-      assert ((f->bb[i].next[1] = reloc[f->bb[i].next[1]]) >= 0);
+      assert ((f->bb[i].next[1] = sim->reloc[f->bb[i].next[1]]) >= 0);
     if (f->bb[i].prev[0] == f->bb[i].prev[1]) f->bb[i].prev[1] = -1;
     if (f->bb[i].next[0] == f->bb[i].next[1]) f->bb[i].next[1] = -1;
 
@@ -897,11 +898,11 @@ int remove_dead_bb (cuc_func *f)
         if ((f->bb[i].insn[j].opt[k] & OPT_BB) &&
                                         ((signed)f->bb[i].insn[j].op[k] >= 0)) {
           if (f->bb[i].insn[j].op[k] != BBID_END)
-            assert ((f->bb[i].insn[j].op[k] = reloc[f->bb[i].insn[j].op[k]]) >= 0);
+            assert ((f->bb[i].insn[j].op[k] = sim->reloc[f->bb[i].insn[j].op[k]]) >= 0);
         } else if (f->bb[i].insn[j].opt[k] & OPT_REF) {
           int t = f->bb[i].insn[j].op[k];
-          assert (reloc[REF_BB(t)] >= 0);
-          f->bb[i].insn[j].op[k] = REF (reloc[REF_BB(t)], REF_I (t));
+          assert (sim->reloc[REF_BB(t)] >= 0);
+          f->bb[i].insn[j].op[k] = REF (sim->reloc[REF_BB(t)], REF_I (t));
         }
   }
   return 1;
@@ -912,8 +913,8 @@ static void reg_dep_rec (cuc_func *f, int cur)
 {
   int i, j;
   cuc_insn *insn = f->bb[cur].insn;
- 
-  //PRINTF ("\n %i", cur); 
+
+  //PRINTF ("\n %i", cur);
   /* Spread only, do not loop */
   if (f->bb[cur].tmp) return;
   f->bb[cur].tmp = 1;
@@ -936,7 +937,7 @@ static void reg_dep_rec (cuc_func *f, int cur)
 }
 
 /* Detect register dependencies */
-void reg_dep (cuc_func *f)
+void reg_dep (or1ksim *sim, cuc_func *f)
 {
   int i, b, c;
 
@@ -953,8 +954,8 @@ void reg_dep (cuc_func *f)
   for (i = 0; i < f->num_bb; i++)
     if (f->bb[i].tmp) f->bb[i].tmp = 0;
     else f->bb[i].type |= BB_DEAD;
-  
-  /* Detect loops; mark BBs where loops must be broken */  
+
+  /* Detect loops; mark BBs where loops must be broken */
   for (c = 0; c < f->num_bb; c++) {
     int min = 3, minb = 0;
 
@@ -978,7 +979,7 @@ void reg_dep (cuc_func *f)
       f->bb[b].type |= BB_INLOOP;
     }
   }
-  
+
   /* Set real predecessors in cmov instructions to previous blocks */
   for (b = 0; b < f->num_bb; b++)
     for (i = 1; i < MAX_REGS - 1; i++) {
@@ -987,10 +988,10 @@ void reg_dep (cuc_func *f)
       assert (f->bb[b].insn[i].opt[0] == (OPT_REGISTER | OPT_DEST));
       assert (f->bb[b].insn[i].op[0] == i);
       if (f->bb[b].prev[0] < 0 || f->bb[b].prev[0] == BBID_START) pa = -1;
-      else pa = f->bb[f->bb[b].prev[0]].last_used_reg[i]; 
+      else pa = f->bb[f->bb[b].prev[0]].last_used_reg[i];
       if (f->bb[b].prev[1] < 0 || f->bb[b].prev[1] == BBID_START) pb = -1;
-      else pb = f->bb[f->bb[b].prev[1]].last_used_reg[i]; 
- 
+      else pb = f->bb[f->bb[b].prev[1]].last_used_reg[i];
+
       /* We do some very simple optimizations right away to make things more readable */
       if (pa < 0 && pb < 0) {
         /* Was not used at all */
@@ -1015,10 +1016,10 @@ void reg_dep (cuc_func *f)
 
         f->bb[b].insn[i].op[1] = pa; f->bb[b].insn[i].opt[1] = OPT_REF;
         assert (f->INSN(pa).opt[0] == (OPT_REGISTER | OPT_DEST));
-        
+
         f->bb[b].insn[i].op[2] = pb; f->bb[b].insn[i].opt[2] = OPT_REF;
         assert (f->INSN(pb).opt[0] == (OPT_REGISTER | OPT_DEST));
-        
+
         /* Update op[3] -- flag register */
         assert (f->bb[b].insn[i].opt[3] == OPT_REGISTER);
         assert (f->bb[b].insn[i].op[3] == LRBB_REG);
@@ -1038,7 +1039,7 @@ void reg_dep (cuc_func *f)
 
     for (i = 1; i < MAX_REGS - 1; i++)
       f->bb[b].last_used_reg[i] = -1;
-    
+
     /* Create references */
     for (i = 0; i < f->bb[b].ninsn; i++) {
       int k;
@@ -1063,7 +1064,7 @@ void reg_dep (cuc_func *f)
           }
         }
       }
-      
+
       /* Now check for destination operand(s) */
       for (k = 0; k < MAX_OPERANDS; k++) if (f->bb[b].insn[i].opt[k] & OPT_DEST)
         if ((f->bb[b].insn[i].opt[k] & ~OPT_DEST) == OPT_REGISTER
@@ -1102,7 +1103,7 @@ void expand_bb (cuc_func *f, int b)
 
   for (i = 0; i < f->bb[b].ninsn; i++)
     if (f->bb[b].insn[i].tmp > mg) mg = f->bb[b].insn[i].tmp;
-  
+
   /* Create copies */
   for (b1 = 1; b1 <= mg; b1++) {
     assert (f->num_bb < MAX_BB);
@@ -1159,7 +1160,7 @@ void expand_bb (cuc_func *f, int b)
 }
 
 /* Scans sequence of BBs and set bb[].cnt */
-void generate_bb_seq (cuc_func *f, char *mp_filename, char *bb_filename)
+void generate_bb_seq (or1ksim *sim, cuc_func *f, char *mp_filename, char *bb_filename)
 {
   FILE *fi, *fo;
   struct mprofentry_struct *buf;
@@ -1177,13 +1178,13 @@ void generate_bb_seq (cuc_func *f, char *mp_filename, char *bb_filename)
   int reopened = 0;
 
   /* Use already opened stream? */
-  if (runtime.sim.fmprof) {
-    fi = runtime.sim.fmprof;
+  if (sim->runtime.sim.fmprof) {
+    fi = sim->runtime.sim.fmprof;
     reopened = 1;
     rewind (fi);
   } else assert (fi = fopen (mp_filename, "rb"));
   assert (fo = fopen (bb_filename, "wb+"));
-  
+
   assert (bb_start = (unsigned long *) malloc (sizeof (unsigned long) * f->num_bb));
   assert (bb_end = (unsigned long *) malloc (sizeof (unsigned long) * f->num_bb));
   for (b = 0; b < f->num_bb; b++) {
@@ -1192,7 +1193,7 @@ void generate_bb_seq (cuc_func *f, char *mp_filename, char *bb_filename)
     //PRINTF ("%i %x %x\n", b, bb_start[b], bb_end[b]);
     f->bb[0].cnt = 0;
   }
-  
+
   buf = (struct mprofentry_struct *) malloc (sizeof (struct mprofentry_struct) * bufsize);
   assert (buf);
 
@@ -1213,7 +1214,7 @@ void generate_bb_seq (cuc_func *f, char *mp_filename, char *bb_filename)
           curbb = b;
           if (prevaddr + 4 != addr) prevbb = -1;
         } else curbb = -1;
-        
+
         /* TODO: do not count interrupts */
         if (curbb != prevbb && curbb >= 0) {
           fwrite (&curbb, sizeof (unsigned long), 1, fo);
@@ -1222,9 +1223,9 @@ void generate_bb_seq (cuc_func *f, char *mp_filename, char *bb_filename)
           prevbb = curbb;
         }
       } else {
-        if (verify_memoryarea(buf[i].addr)) {
-          if (buf[i].type & MPROF_WRITE) mscnt++, mssum += cur_area->ops.delayw;
-          else mlcnt++, mlsum += cur_area->ops.delayr;
+        if (verify_memoryarea(sim, buf[i].addr)) {
+          if (buf[i].type & MPROF_WRITE) mscnt++, mssum += sim->cur_area->ops.delayw;
+          else mlcnt++, mlsum += sim->cur_area->ops.delayr;
         }
       }
     }
@@ -1232,9 +1233,9 @@ void generate_bb_seq (cuc_func *f, char *mp_filename, char *bb_filename)
   } while (r == bufsize);
   //PRINTF ("\n");
 
-  runtime.cuc.mdelay[0] = (1. * mlsum) / mlcnt;
-  runtime.cuc.mdelay[1] = (1. * mssum) / mscnt;
-  runtime.cuc.mdelay[2] = runtime.cuc.mdelay[3] = 1;
+  sim->runtime.cuc.mdelay[0] = (1. * mlsum) / mlcnt;
+  sim->runtime.cuc.mdelay[1] = (1. * mssum) / mscnt;
+  sim->runtime.cuc.mdelay[2] = sim->runtime.cuc.mdelay[3] = 1;
   f->num_runs = f->bb[0].cnt;
   if (!reopened) fclose (fi);
   fclose (fo);
@@ -1250,7 +1251,7 @@ void generate_bb_seq (cuc_func *f, char *mp_filename, char *bb_filename)
 }
 
 /* Scans sequence of BBs and set counts for pre/unrolled loop for BB b */
-void count_bb_seq (cuc_func *f, int b, char *bb_filename, int *counts, int preroll, int unroll)
+void count_bb_seq (or1ksim* sim, cuc_func *f, int b, char *bb_filename, int *counts, int preroll, int unroll)
 {
   FILE *fi;
   const int bufsize = 256;
@@ -1298,7 +1299,7 @@ static void relocate_bb (cuc_bb *bb, int b, int back, int fwd)
 
 /* Preroll if type == 1 or unroll if type == 0 loop in BB b `ntimes' times and return
    new function. Original function is unmodified. */
-static cuc_func *roll_loop (cuc_func *f, int b, int ntimes, int type)
+static cuc_func *roll_loop (or1ksim *sim, cuc_func *f, int b, int ntimes, int type)
 {
   int b1, t, i, prevb, prevart_b;
   cuc_func *n = dup_func (f);
@@ -1309,7 +1310,7 @@ static cuc_func *roll_loop (cuc_func *f, int b, int ntimes, int type)
   cucdebug (3, "roll type = %i, BB%i x %i (num_bb %i)\n", type, b, ntimes, n->num_bb);
   ntimes--;
   assert (n->num_bb + ntimes * 2 < MAX_BB);
-  
+
   prevb = b;
   prevart_b = b;
 
@@ -1328,8 +1329,8 @@ static cuc_func *roll_loop (cuc_func *f, int b, int ntimes, int type)
     cpy_bb (&n->bb[b1], ob);
     /* Only one should be in loop, so we remove any INLOOP flags from duplicates */
     n->bb[b1].type &= ~BB_INLOOP;
-    print_cuc_bb (n, "prerollA");
-    
+    print_cuc_bb (sim, n, "prerollA");
+
     printf ("prevb %i b1 %i prevart %i\n", prevb, b1, prevart_b);
     /* Set predecessor's successor */
     if (n->bb[prevb].next[0] == b) {
@@ -1356,7 +1357,7 @@ static cuc_func *roll_loop (cuc_func *f, int b, int ntimes, int type)
     b1 = n->num_bb++;
     cpy_bb (&n->bb[b1], ob);
     n->bb[b1].cnt = 0;
-    
+
     for (i = 0; i < ob->ninsn - 1; i++) {
       ii = &n->bb[b1].insn[i];
       if (ob->insn[i].opt[0] & OPT_DEST) {
@@ -1410,13 +1411,13 @@ static cuc_func *roll_loop (cuc_func *f, int b, int ntimes, int type)
 
     prevb = b1 - 1;
     prevart_b = b1;
-    print_cuc_bb (n, "prerollB");
+    print_cuc_bb (sim, n, "prerollB");
   }
-  
-  print_cuc_bb (n, "preroll0");
+
+  print_cuc_bb (sim, n, "preroll0");
   n->bb[prevart_b].next[0] = ob->next[0] == b ? ob->next[1] : ob->next[0];
 
-  print_cuc_bb (n, "preroll1");
+  print_cuc_bb (sim, n, "preroll1");
   /* repair BB after loop, to point back to latest artificial BB */
   b1 = n->bb[prevart_b].next[0];
   if (b1 >= 0 && b1 != BBID_END) {
@@ -1432,7 +1433,7 @@ static cuc_func *roll_loop (cuc_func *f, int b, int ntimes, int type)
     else if (n->bb[prevb].next[1] == b) n->bb[prevb].next[1] = prevb;
     else assert (0);
     n->bb[prevb].prev[1] = prevb;
-    
+
     /* Set predecessor */
     if (n->bb[b].prev[0] == b) {
       n->bb[b].prev[0] = n->bb[b].prev[1];
@@ -1452,7 +1453,7 @@ static cuc_func *roll_loop (cuc_func *f, int b, int ntimes, int type)
     else assert (0);
   }
 
-  print_cuc_bb (n, "preroll2");
+  print_cuc_bb (sim, n, "preroll2");
 
   /* Relocate backward references to current instance and forward references
      to previous one */
@@ -1460,36 +1461,36 @@ static cuc_func *roll_loop (cuc_func *f, int b, int ntimes, int type)
 
   /* Relocate all other blocks to point to latest prevart_b */
   for (i = 0; i < f->num_bb; i++)
-    if (i != b) relocate_bb (&n->bb[i], b, prevart_b, prevart_b); 
- 
+    if (i != b) relocate_bb (&n->bb[i], b, prevart_b, prevart_b);
+
   return n;
 }
 
 /* Unroll loop b unroll times and return new function. Original
    function is unmodified. */
-cuc_func *preunroll_loop (cuc_func *f, int b, int preroll, int unroll, char *bb_filename)
+cuc_func *preunroll_loop (or1ksim *sim, cuc_func *f, int b, int preroll, int unroll, char *bb_filename)
 {
   int b1, i;
   cuc_func *n, *t;
   int *counts;
 
   if (preroll > 1) {
-    t = roll_loop (f, b, preroll, 1);
+    t = roll_loop (sim, f, b, preroll, 1);
     b1 = t->num_bb - 2;
     if (unroll > 1) {
       //print_cuc_bb (t, "preunroll1");
-      n = roll_loop (t, b1, unroll, 0);
+      n = roll_loop (sim, t, b1, unroll, 0);
       free_func (t);
     } else n = t;
   } else {
     b1 = b;
-    if (unroll > 1) n = roll_loop (f, b1, unroll, 0);
+    if (unroll > 1) n = roll_loop (sim, f, b1, unroll, 0);
     else return dup_func (f);
-  }  
- 
+  }
+
   /* Assign new counts to functions */
   assert (counts = (int *)malloc (sizeof (int) * (preroll - 1 + unroll)));
-  count_bb_seq (n, b, bb_filename, counts, preroll, unroll);
+  count_bb_seq (sim, n, b, bb_filename, counts, preroll, unroll);
   for (i = 0; i < preroll - 1 + unroll; i++) {
     if (i == 0) b1 = b;
     else b1 = f->num_bb + (i - 1) * 2;

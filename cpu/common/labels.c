@@ -2,6 +2,7 @@
 
    Copyright (C) 2001 Marko Mlinar, markom@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -37,28 +38,19 @@
 /* Package includes */
 #include "labels.h"
 
-#define LABELS_HASH_SIZE 119
-
-/* Globally visible list of breakpoints */
-struct breakpoint_entry *breakpoints;
-
-/* Local list of labels (symbols) */
-static struct label_entry *label_hash[LABELS_HASH_SIZE];
-
-
 void
-init_labels ()
+init_labels (or1ksim *sim)
 {
   int i;
   for (i = 0; i < LABELS_HASH_SIZE; i++)
-    label_hash[i] = NULL;
+    sim->label_hash[i] = NULL;
 }
 
 void
-add_label (oraddr_t addr, char *name)
+add_label (or1ksim* sim, oraddr_t addr, char *name)
 {
   struct label_entry **tmp;
-  tmp = &(label_hash[addr % LABELS_HASH_SIZE]);
+  tmp = &(sim->label_hash[addr % LABELS_HASH_SIZE]);
   for (; *tmp; tmp = &((*tmp)->next));
   *tmp = malloc (sizeof (**tmp));
   (*tmp)->name = malloc (strlen (name) + 1);
@@ -68,9 +60,9 @@ add_label (oraddr_t addr, char *name)
 }
 
 struct label_entry *
-get_label (oraddr_t addr)
+get_label (or1ksim* sim, oraddr_t addr)
 {
-  struct label_entry *tmp = label_hash[addr % LABELS_HASH_SIZE];
+  struct label_entry *tmp = sim->label_hash[addr % LABELS_HASH_SIZE];
   while (tmp)
     {
       if (tmp->addr == addr)
@@ -81,12 +73,12 @@ get_label (oraddr_t addr)
 }
 
 struct label_entry *
-find_label (char *name)
+find_label (or1ksim* sim, char *name)
 {
   int i;
   for (i = 0; i < LABELS_HASH_SIZE; i++)
     {
-      struct label_entry *tmp = label_hash[i % LABELS_HASH_SIZE];
+      struct label_entry *tmp = sim->label_hash[i % LABELS_HASH_SIZE];
       while (tmp)
 	{
 	  if (strcmp (tmp->name, name) == 0)
@@ -100,7 +92,7 @@ find_label (char *name)
 /* Searches mem array for a particular label and returns label's address.
    If label does not exist, returns 0. */
 oraddr_t
-eval_label (char *name)
+eval_label (or1ksim* sim, char *name)
 {
   struct label_entry *le;
   char *plus;
@@ -119,7 +111,7 @@ eval_label (char *name)
       *minus = '\0';
       negative_offset = atoi (++minus);
     }
-  le = find_label (name);
+  le = find_label (sim, name);
   if (!le)
     return 0;
 
@@ -127,25 +119,25 @@ eval_label (char *name)
 }
 
 void
-init_breakpoints ()
+init_breakpoints (or1ksim* sim)
 {
-  breakpoints = 0;
+  sim->breakpoints = 0;
 }
 
 void
-add_breakpoint (oraddr_t addr)
+add_breakpoint (or1ksim* sim, oraddr_t addr)
 {
   struct breakpoint_entry *tmp;
   tmp = (struct breakpoint_entry *) malloc (sizeof (struct breakpoint_entry));
-  tmp->next = breakpoints;
+  tmp->next = sim->breakpoints;
   tmp->addr = addr;
-  breakpoints = tmp;
+  sim->breakpoints = tmp;
 }
 
 void
-remove_breakpoint (oraddr_t addr)
+remove_breakpoint (or1ksim* sim, oraddr_t addr)
 {
-  struct breakpoint_entry **tmp = &breakpoints;
+  struct breakpoint_entry **tmp = &sim->breakpoints;
   while (*tmp)
     {
       if ((*tmp)->addr == addr)
@@ -160,9 +152,9 @@ remove_breakpoint (oraddr_t addr)
 }
 
 void
-print_breakpoints ()
+print_breakpoints (or1ksim* sim)
 {
-  struct breakpoint_entry **tmp = &breakpoints;
+  struct breakpoint_entry **tmp = &sim->breakpoints;
   int i = 1;
   printf ("---[breakpoints]------------------\n");
   while (*tmp)
@@ -174,9 +166,9 @@ print_breakpoints ()
 }
 
 int
-has_breakpoint (oraddr_t addr)
+has_breakpoint (or1ksim* sim, oraddr_t addr)
 {
-  struct breakpoint_entry *tmp = breakpoints;
+  struct breakpoint_entry *tmp = sim->breakpoints;
   while (tmp)
     {
       if (tmp->addr == addr)

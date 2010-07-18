@@ -28,6 +28,6 @@
 #define TCP__H
 
 /* Global data structures for external use */
-extern struct channel_ops  tcp_channel_ops;
+extern const struct channel_ops  tcp_channel_ops;
 
 #endif	/* TCP__H */

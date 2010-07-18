@@ -2,6 +2,7 @@
 
    Copyright (C) 2002 Marko Mlinar, markom@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -38,11 +39,11 @@
 
 /* Adds a new entry to the memory profile file */
 void
-mprofile (oraddr_t memaddr, unsigned char type)
+mprofile (or1ksim *sim,oraddr_t memaddr, unsigned char type)
 {
   struct mprofentry_struct mp;
   mp.addr = memaddr;
   mp.type = type;
-  if (!fwrite (&mp, sizeof (struct mprofentry_struct), 1, runtime.sim.fmprof))
-    config.sim.mprofile = 0;
+  if (!fwrite (&mp, sizeof (struct mprofentry_struct), 1, sim->runtime.sim.fmprof))
+    sim->config.sim.mprofile = 0;
 }

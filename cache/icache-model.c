@@ -2,20 +2,26 @@
 
    Copyright (C) 1999 Damjan Lampret, lampret@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
+
   
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
+
   
    This file is part of OpenRISC 1000 Architectural Simulator.
+
   
    This program is free software; you can redistribute it and/or modify it
    under the terms of the GNU General Public License as published by the Free
    Software Foundation; either version 3 of the License, or (at your option)
    any later version.
+
   
    This program is distributed in the hope that it will be useful, but WITHOUT
    ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
    FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
    more details.
+
   
    You should have received a copy of the GNU General Public License along
    with this program.  If not, see <http://www.gnu.org/licenses/>. */
@@ -23,7 +29,7 @@
 /* This program is commented throughout in a fashion suitable for processing
    with Doxygen. */
 
-/* Cache functions. 
+/* Cache functions.
    At the moment this functions only simulate functionality of instruction
    caches and do not influence on fetche/decode/execute stages and timings.
    They are here only to verify performance of various cache configurations.
@@ -46,6 +52,7 @@
 #include "stats.h"
 #include "sim-cmd.h"
 
+#include "icache-model.h" // include to verify declarations
 
 #define MAX_IC_SETS        1024
 #define MAX_IC_WAYS          32
@@ -53,13 +60,11 @@
 #define MAX_IC_BLOCK_SIZE    32
 
 
-struct ic *ic_state = NULL;
-
 static void
-ic_info (void *dat)
+ic_info (or1ksim *sim, void *dat)
 {
   struct ic *ic = dat;
-  if (!(cpu_state.sprs[SPR_UPR] & SPR_UPR_ICP))
+  if (!(sim->cpu_state.sprs[SPR_UPR] & SPR_UPR_ICP))
     {
       PRINTF ("ICache not implemented. Set UPR[ICP].\n");
       return;
@@ -85,7 +90,7 @@ ic_info (void *dat)
 */
 
 uint32_t
-ic_simulate_fetch (oraddr_t fetchaddr, oraddr_t virt_addr)
+ic_simulate_fetch (or1ksim *sim, oraddr_t fetchaddr, oraddr_t virt_addr)
 {
   oraddr_t set;
   oraddr_t way;
@@ -95,15 +100,15 @@ ic_simulate_fetch (oraddr_t fetchaddr, oraddr_t virt_addr)
   oraddr_t reload_addr;
   oraddr_t reload_end;
   unsigned int minlru;
-  struct ic *ic = ic_state;
+  struct ic *ic = sim->ic_state;
 
   /* ICache simulation enabled/disabled. */
-  if (!(cpu_state.sprs[SPR_UPR] & SPR_UPR_ICP) ||
-      !(cpu_state.sprs[SPR_SR] & SPR_SR_ICE) || insn_ci)
+  if (!(sim->cpu_state.sprs[SPR_UPR] & SPR_UPR_ICP) ||
+      !(sim->cpu_state.sprs[SPR_SR] & SPR_SR_ICE) || sim->insn_ci)
     {
-      tmp = evalsim_mem32 (fetchaddr, virt_addr);
-      if (cur_area && cur_area->log)
-	fprintf (cur_area->log, "[%" PRIxADDR "] -> read %08" PRIx32 "\n",
+      tmp = evalsim_mem32 (sim,fetchaddr, virt_addr);
+      if (sim->cur_area && sim->cur_area->log)
+	fprintf (sim->cur_area->log, "[%" PRIxADDR "] -> read %08" PRIx32 "\n",
 		 fetchaddr, tmp);
       return tmp;
     }
@@ -117,13 +122,13 @@ ic_simulate_fetch (oraddr_t fetchaddr, oraddr_t virt_addr)
     {
       if (ic->tags[way] == tagaddr)
 	{
-	  ic_stats.readhit++;
+	  sim->ic_stats.readhit++;
 
 	  for (lru_way = set; lru_way < ic->last_way; lru_way += ic->nsets)
 	    if (ic->lrus[lru_way] > ic->lrus[way])
 	      ic->lrus[lru_way]--;
 	  ic->lrus[way] = ic->ustates_reload;
-	  runtime.sim.mem_cycles += ic->hitdelay;
+	  sim->runtime.sim.mem_cycles += ic->hitdelay;
 	  way <<= ic->blocksize_log2;
 	  return *(uint32_t *) & ic->
 	    mem[way | (fetchaddr & ic->block_offset_mask)];
@@ -133,7 +138,7 @@ ic_simulate_fetch (oraddr_t fetchaddr, oraddr_t virt_addr)
   minlru = ic->ustates_reload;
   way = set;
 
-  ic_stats.readmiss++;
+  sim->ic_stats.readmiss++;
 
   for (lru_way = set; lru_way < ic->last_way; lru_way += ic->nsets)
     {
@@ -162,19 +167,19 @@ ic_simulate_fetch (oraddr_t fetchaddr, oraddr_t virt_addr)
 	*(uint32_t *) & ic->mem[way | (reload_addr & ic->block_offset_mask)] =
 	/* FIXME: What is the virtual address meant to be? (ie. What happens if
 	 * we read out of memory while refilling a cache line?) */
-	evalsim_mem32 (fetchaddr | (reload_addr & ic->block_offset_mask), 0);
-      if (!cur_area)
+	evalsim_mem32 (sim, fetchaddr | (reload_addr & ic->block_offset_mask), 0);
+      if (!sim->cur_area)
 	{
 	  ic->tags[way >> ic->blocksize_log2] = -1;
 	  ic->lrus[way >> ic->blocksize_log2] = 0;
 	  return 0;
 	}
-      else if (cur_area->log)
-	fprintf (cur_area->log, "[%" PRIxADDR "] -> read %08" PRIx32 "\n",
+      else if (sim->cur_area->log)
+	fprintf (sim->cur_area->log, "[%" PRIxADDR "] -> read %08" PRIx32 "\n",
 		 fetchaddr, tmp);
     }
 
-  runtime.sim.mem_cycles += ic->missdelay;
+  sim->runtime.sim.mem_cycles += ic->missdelay;
   return *(uint32_t *) & ic->mem[way | (reload_addr & ic->block_offset_mask)];
 }
 
@@ -184,20 +189,20 @@ ic_simulate_fetch (oraddr_t fetchaddr, oraddr_t virt_addr)
 */
 
 void
-ic_inv (oraddr_t dataaddr)
+ic_inv (or1ksim *sim, oraddr_t dataaddr)
 {
   oraddr_t set;
   oraddr_t way;
   oraddr_t tagaddr;
-  struct ic *ic = ic_state;
+  struct ic *ic = sim->ic_state;
 
-  if (!(cpu_state.sprs[SPR_UPR] & SPR_UPR_ICP))
+  if (!(sim->cpu_state.sprs[SPR_UPR] & SPR_UPR_ICP))
     return;
 
   /* Which set to check out? */
   set = (dataaddr & ic->set_mask) >> ic->blocksize_log2;
 
-  if (!(cpu_state.sprs[SPR_SR] & SPR_SR_ICE))
+  if (!(sim->cpu_state.sprs[SPR_SR] & SPR_SR_ICE))
     {
       for (way = set; way < ic->last_way; way += ic->nsets)
 	{
@@ -232,7 +237,7 @@ ic_inv (oraddr_t dataaddr)
    @param[in] dat  The config data structure                                 */
 /*---------------------------------------------------------------------------*/
 static void
-ic_enabled (union param_val  val,
+ic_enabled (or1ksim *sim,union param_val  val,
 	    void            *dat)
 {
   struct ic *ic = dat;
@@ -241,11 +246,11 @@ ic_enabled (union param_val  val,
 
   if (val.int_val)
     {
-      cpu_state.sprs[SPR_UPR] |= SPR_UPR_ICP;
+      sim->cpu_state.sprs[SPR_UPR] |= SPR_UPR_ICP;
     }
   else
     {
-      cpu_state.sprs[SPR_UPR] &= ~SPR_UPR_ICP;
+      sim->cpu_state.sprs[SPR_UPR] &= ~SPR_UPR_ICP;
     }
 }	/* ic_enabled() */
 
@@ -259,7 +264,7 @@ ic_enabled (union param_val  val,
    @param[in] dat  The config data structure                                 */
 /*---------------------------------------------------------------------------*/
 static void
-ic_nsets (union param_val  val,
+ic_nsets (or1ksim *sim,union param_val  val,
 	  void            *dat)
 {
   struct ic *ic = dat;
@@ -270,8 +275,8 @@ ic_nsets (union param_val  val,
 
       ic->nsets = val.int_val;
 
-      cpu_state.sprs[SPR_ICCFGR] &= ~SPR_ICCFGR_NCS;
-      cpu_state.sprs[SPR_ICCFGR] |= set_bits << SPR_ICCFGR_NCS_OFF;
+      sim->cpu_state.sprs[SPR_ICCFGR] &= ~SPR_ICCFGR_NCS;
+      sim->cpu_state.sprs[SPR_ICCFGR] |= set_bits << SPR_ICCFGR_NCS_OFF;
     }
   else
     {
@@ -290,7 +295,7 @@ ic_nsets (union param_val  val,
    @param[in] dat  The config data structure                                 */
 /*---------------------------------------------------------------------------*/
 static void
-ic_nways (union param_val  val,
+ic_nways (or1ksim *sim,union param_val  val,
 	    void            *dat)
 {
   struct ic *ic = dat;
@@ -301,8 +306,8 @@ ic_nways (union param_val  val,
 
       ic->nways = val.int_val;
 
-      cpu_state.sprs[SPR_ICCFGR] &= ~SPR_ICCFGR_NCW;
-      cpu_state.sprs[SPR_ICCFGR] |= way_bits << SPR_ICCFGR_NCW_OFF;
+      sim->cpu_state.sprs[SPR_ICCFGR] &= ~SPR_ICCFGR_NCW;
+      sim->cpu_state.sprs[SPR_ICCFGR] |= way_bits << SPR_ICCFGR_NCW_OFF;
     }
   else
     {
@@ -322,7 +327,7 @@ ic_nways (union param_val  val,
    @param[in] dat  The config data structure                                 */
 /*---------------------------------------------------------------------------*/
 static void
-ic_blocksize (union param_val  val,
+ic_blocksize (or1ksim *sim,union param_val  val,
 	      void            *dat)
 {
   struct ic *ic = dat;
@@ -331,12 +336,12 @@ ic_blocksize (union param_val  val,
     {
     case MIN_IC_BLOCK_SIZE:
       ic->blocksize               = val.int_val;
-      cpu_state.sprs[SPR_ICCFGR] &= ~SPR_ICCFGR_CBS;
+      sim->cpu_state.sprs[SPR_ICCFGR] &= ~SPR_ICCFGR_CBS;
       break;
 
     case MAX_IC_BLOCK_SIZE:
       ic->blocksize               = val.int_val;
-      cpu_state.sprs[SPR_ICCFGR] |= SPR_ICCFGR_CBS;
+      sim->cpu_state.sprs[SPR_ICCFGR] |= SPR_ICCFGR_CBS;
       break;
 
     default:
@@ -356,7 +361,7 @@ ic_blocksize (union param_val  val,
    @param[in] dat  The config data structure                                 */
 /*---------------------------------------------------------------------------*/
 static void
-ic_ustates (union param_val  val,
+ic_ustates (or1ksim *sim,union param_val  val,
 	    void            *dat)
 {
   struct ic *ic = dat;
@@ -374,7 +379,7 @@ ic_ustates (union param_val  val,
 
 
 static void
-ic_hitdelay (union param_val  val,
+ic_hitdelay (or1ksim *sim,union param_val  val,
 	     void            *dat)
 {
   struct ic *ic = dat;
@@ -383,7 +388,7 @@ ic_hitdelay (union param_val  val,
 
 
 static void
-ic_missdelay (union param_val  val,
+ic_missdelay (or1ksim *sim,union param_val  val,
 	      void            *dat)
 {
   struct ic *ic = dat;
@@ -400,7 +405,7 @@ ic_missdelay (union param_val  val,
    @return  The new memory configuration data structure                      */
 /*---------------------------------------------------------------------------*/
 static void *
-ic_start_sec ()
+ic_start_sec (or1ksim *sim)
 {
   struct ic *ic;
   int        set_bits;
@@ -428,38 +433,38 @@ ic_start_sec ()
 
   if (ic->enabled)
     {
-      cpu_state.sprs[SPR_UPR] |= SPR_UPR_ICP;
+      sim->cpu_state.sprs[SPR_UPR] |= SPR_UPR_ICP;
     }
   else
     {
-      cpu_state.sprs[SPR_UPR] &= ~SPR_UPR_ICP;
+      sim->cpu_state.sprs[SPR_UPR] &= ~SPR_UPR_ICP;
     }
 
   set_bits = log2_int (ic->nsets);
-  cpu_state.sprs[SPR_ICCFGR] &= ~SPR_ICCFGR_NCS;
-  cpu_state.sprs[SPR_ICCFGR] |= set_bits << SPR_ICCFGR_NCS_OFF;
+  sim->cpu_state.sprs[SPR_ICCFGR] &= ~SPR_ICCFGR_NCS;
+  sim->cpu_state.sprs[SPR_ICCFGR] |= set_bits << SPR_ICCFGR_NCS_OFF;
 
   way_bits = log2_int (ic->nways);
-  cpu_state.sprs[SPR_ICCFGR] &= ~SPR_ICCFGR_NCW;
-  cpu_state.sprs[SPR_ICCFGR] |= way_bits << SPR_ICCFGR_NCW_OFF;
+  sim->cpu_state.sprs[SPR_ICCFGR] &= ~SPR_ICCFGR_NCW;
+  sim->cpu_state.sprs[SPR_ICCFGR] |= way_bits << SPR_ICCFGR_NCW_OFF;
 
   if (MIN_IC_BLOCK_SIZE == ic->blocksize)
     {
-      cpu_state.sprs[SPR_ICCFGR] &= ~SPR_ICCFGR_CBS;
+      sim->cpu_state.sprs[SPR_ICCFGR] &= ~SPR_ICCFGR_CBS;
     }
   else
     {
-      cpu_state.sprs[SPR_ICCFGR] |= SPR_ICCFGR_CBS;
+      sim->cpu_state.sprs[SPR_ICCFGR] |= SPR_ICCFGR_CBS;
     }
 
-  ic_state = ic;
+  sim->ic_state = ic;
   return ic;
 
 }	/* ic_start_sec() */
 
 
 static void
-ic_end_sec (void *dat)
+ic_end_sec (or1ksim *sim,void *dat)
 {
   struct ic *ic = dat;
   unsigned int size = ic->nways * ic->nsets * ic->blocksize;
@@ -501,14 +506,14 @@ ic_end_sec (void *dat)
   ic->ustates_reload    = ic->ustates - 1;
 
   if (ic->enabled)
-    reg_sim_stat (ic_info, dat);
+    reg_sim_stat (sim, ic_info, dat);
 }
 
 void
-reg_ic_sec (void)
+reg_ic_sec (or1ksim* sim)
 {
   struct config_section *sec =
-    reg_config_sec ("ic", ic_start_sec, ic_end_sec);
+    reg_config_sec (sim, "ic", ic_start_sec, ic_end_sec);
 
   reg_config_param (sec, "enabled", paramt_int, ic_enabled);
   reg_config_param (sec, "nsets", paramt_int, ic_nsets);

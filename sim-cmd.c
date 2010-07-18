@@ -1,8 +1,9 @@
 /* sim-cmd.c -- Simulator command parsing
 
    Copyright (C) 1999 Damjan Lampret, lampret@opencores.org
-   Copyright (C) 2005 György `nog' Jeney, nog@sdf.lonestar.org
+   Copyright (C) 2005 GyÃ¶rgy `nog' Jeney, nog@sdf.lonestar.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -59,22 +60,16 @@
 #include "cuc.h"
 #include "rsp-server.h"
 
-
-/* The number of instructions to execute before droping into interactive mode */
-static long long to_insn_num;
-
 struct sim_stat
 {
-  void (*stat_func) (void *dat);
+  void (*stat_func) (or1ksim *sim, void *dat);
   void *dat;
   struct sim_stat *next;
 };
 
-static struct sim_stat *sim_stats = NULL;
-
 /* Registers a status printing callback */
 void
-reg_sim_stat (void (*stat_func) (void *dat), void *dat)
+reg_sim_stat (or1ksim *sim, void (*stat_func) (or1ksim *sim, void *dat), void *dat)
 {
   struct sim_stat *new = malloc (sizeof (struct sim_stat));
 
@@ -86,30 +81,30 @@ reg_sim_stat (void (*stat_func) (void *dat), void *dat)
 
   new->stat_func = stat_func;
   new->dat = dat;
-  new->next = sim_stats;
-  sim_stats = new;
+  new->next = sim->sim_stats;
+  sim->sim_stats = new;
 }
 
 /* Scheduler job that drops us back into interactive mode after the next
  * instruction has executed */
 void
-reenter_int (void *dat)
+reenter_int (or1ksim *sim, void *dat)
 {
-  if (!runtime.sim.hush)
-    dumpreg ();
-  handle_sim_command ();
+  if (!sim->runtime.sim.hush)
+    dumpreg (sim);
+  handle_sim_command (sim);
 }
 
 static int
-sim_cmd_quit (int argc, char **argv)	/* quit */
+sim_cmd_quit (or1ksim *sim, int argc, char **argv)	/* quit */
 {
   PRINTF ("\n");
-  sim_done ();
+  sim_done (sim);
   return 0;
 }
 
 static int
-sim_cmd_help (int argc, char **argv)	/* help */
+sim_cmd_help (or1ksim *sim, int argc, char **argv)	/* help */
 {
   PRINTF ("q                              - quit simulator\n");
   PRINTF ("r                              - display all registers\n");
@@ -157,49 +152,49 @@ sim_cmd_help (int argc, char **argv)	/* help */
   PRINTF
     ("<cmd> > <filename>             - redirect simulator stdout to <filename>\n");
   PRINTF ("                                 (and not emulated PRINTF)\n\n");
-  (void)main_mprofiler (0, NULL, 1);
+  (void)main_mprofiler (sim, 0, NULL, 1);
   PRINTF ("\n");
-  (void)main_profiler (0, NULL, 1);
+  (void)main_profiler (sim, 0, NULL, 1);
   return 0;
 }
 
 static int
-sim_cmd_trace (int argc, char **argv)	/* trace */
+sim_cmd_trace (or1ksim *sim, int argc, char **argv)	/* trace */
 {
-  runtime.sim.hush = 0;
-  sched_next_insn (reenter_int, NULL);
+  sim->runtime.sim.hush = 0;
+  sched_next_insn (sim, reenter_int, NULL);
   return 1;
 }
 
 static int
-sim_cmd_dm (int argc, char **argv)	/* dump memory */
+sim_cmd_dm (or1ksim *sim, int argc, char **argv)	/* dump memory */
 {
   static oraddr_t from = 0, to = 0;
 
   if (argc >= 2)
     {
       if (argv[1][0] == '_')
-	from = eval_label (argv[1]);
+	from = eval_label (sim, argv[1]);
       else
 	from = strtoul (argv[1], NULL, 0);
       to = from + 0x40;
     }
   if (argc >= 3)
     to = strtoul (argv[2], NULL, 0);
-  dump_memory (from, to);
+  dump_memory (sim, from, to);
   PRINTF ("\n");
   return 0;
 }
 
 static int
-sim_cmd_dv (int argc, char **argv)	/* dump memory as verilog */
+sim_cmd_dv (or1ksim *sim, int argc, char **argv)	/* dump memory as verilog */
 {
   static oraddr_t from = 0, to = 0;
 
   if (argc >= 2)
     {
       if (argv[1][0] == '_')
-	from = eval_label (argv[1]);
+	from = eval_label (sim, argv[1]);
       else
 	from = strtoul (argv[1], NULL, 0);
       to = from + 0x40;
@@ -208,23 +203,23 @@ sim_cmd_dv (int argc, char **argv)	/* dump memory as verilog */
     to = strtoul (argv[2], NULL, 0);
 
   if (argc < 4)
-    dumpverilog ("or1k_mem", from, to);
+    dumpverilog (sim, "or1k_mem", from, to);
   else
-    dumpverilog (argv[3], from, to);
+    dumpverilog (sim, argv[3], from, to);
 
   PRINTF ("\n");
   return 0;
 }
 
 static int
-sim_cmd_dh (int argc, char **argv)	/* dump memory as hex */
+sim_cmd_dh (or1ksim *sim, int argc, char **argv)	/* dump memory as hex */
 {
   static oraddr_t from = 0, to = 0;
 
   if (argc >= 2)
     {
       if (argv[1][0] == '_')
-	from = eval_label (argv[1]);
+	from = eval_label (sim, argv[1]);
       else
 	from = strtoul (argv[1], NULL, 0);
       to = from + 0x40;
@@ -232,13 +227,13 @@ sim_cmd_dh (int argc, char **argv)	/* dump memory as hex */
   if (argc >= 3)
     to = strtoul (argv[2], NULL, 0);
 
-  dumphex (from, to);
+  dumphex (sim,from, to);
   PRINTF ("\n");
   return 0;
 }
 
 static int
-sim_cmd_pm (int argc, char **argv)	/* patch memory */
+sim_cmd_pm (or1ksim *sim, int argc, char **argv)	/* patch memory */
 {
   static oraddr_t addr = 0;
   int breakpoint = 0;
@@ -252,16 +247,16 @@ sim_cmd_pm (int argc, char **argv)	/* patch memory */
   if (argc >= 2)
     {
       if (argv[1][0] == '_')
-	addr = eval_label (argv[1]);
+	addr = eval_label (sim, argv[1]);
       else
 	addr = strtoul (argv[1], NULL, 0);
     }
-  set_mem32 (addr, strtoul (argv[2], NULL, 0), &breakpoint);
+  set_mem32 (sim, addr, strtoul (argv[2], NULL, 0), &breakpoint);
   return 0;
 }
 
 static int
-sim_cmd_cm (int argc, char **argv)	/* copy memory 2004-01-20 hpanther */
+sim_cmd_cm (or1ksim *sim, int argc, char **argv)	/* copy memory 2004-01-20 hpanther */
 {
   static oraddr_t from = 0, to = 0;
   static unsigned int size = 0;
@@ -270,7 +265,7 @@ sim_cmd_cm (int argc, char **argv)	/* copy memory 2004-01-20 hpanther */
   if (argc >= 2)
     {
       if (argv[1][0] == '_')
-	from = eval_label (argv[1]);
+	from = eval_label (sim, argv[1]);
       else
 	from = strtoul (argv[1], NULL, 0);
     }
@@ -278,7 +273,7 @@ sim_cmd_cm (int argc, char **argv)	/* copy memory 2004-01-20 hpanther */
   if (argc >= 3)
     {
       if (argv[2][0] == '_')
-	to = eval_label (argv[2]);
+	to = eval_label (sim, argv[2]);
       else
 	to = strtoul (argv[2], NULL, 0);
     }
@@ -286,25 +281,25 @@ sim_cmd_cm (int argc, char **argv)	/* copy memory 2004-01-20 hpanther */
   if (argc >= 4)
     {
       if (argv[3][0] == '_')
-	size = eval_label (argv[3]);
+	size = eval_label (sim, argv[3]);
       else
 	size = strtoul (argv[3], NULL, 0);
     }
 
   for (i = 0; i < size; i += 4)
-    set_direct32 (to + i, eval_direct32 (from + i, 0, 0), 0, 0);
+    set_direct32 (sim, to + i, eval_direct32 (sim, from + i, 0, 0), 0, 0);
   return 0;
 }
 
 static int
-sim_cmd_pr (int argc, char **argv)	/* patch regs */
+sim_cmd_pr (or1ksim *sim, int argc, char **argv)	/* patch regs */
 {
   if (argc != 3)
     {
       PRINTF ("pr <register> <value>\n");
       return 0;
     }
-  setsim_reg (strtoul (argv[1], NULL, 0), strtoul (argv[2], NULL, 0));
+  setsim_reg (sim, strtoul (argv[1], NULL, 0), strtoul (argv[2], NULL, 0));
 #if DYNAMIC_EXECUTION
   PRINTF
     ("WARNING: Patching registers may not work with the dynamic execution model\n");
@@ -313,7 +308,7 @@ sim_cmd_pr (int argc, char **argv)	/* patch regs */
 }
 
 static int
-sim_cmd_pc (int argc, char **argv)	/* patch PC */
+sim_cmd_pc (or1ksim *sim, int argc, char **argv)	/* patch PC */
 {
 #if DYNAMIC_EXECUTION
   PRINTF ("Patching the pc in the dynamic execution model doesn't work\n");
@@ -324,21 +319,21 @@ sim_cmd_pc (int argc, char **argv)	/* patch PC */
       return 0;
     }
 
-  cpu_state.pc = strtoul (argv[1], NULL, 0);
-  pcnext = cpu_state.pc + 4;
+  sim->cpu_state.pc = strtoul (argv[1], NULL, 0);
+  sim->pcnext = sim->cpu_state.pc + 4;
 #endif
   return 0;
 }
 
 static int
-sim_cmd_breaks (int argc, char **argv)	/* print breakpoints */
+sim_cmd_breaks (or1ksim *sim, int argc, char **argv)	/* print breakpoints */
 {
-  print_breakpoints ();
+  print_breakpoints (sim);
   return 0;
 }
 
 static int
-sim_cmd_break (int argc, char **argv)	/* set/clear breakpoint */
+sim_cmd_break (or1ksim *sim, int argc, char **argv)	/* set/clear breakpoint */
 {
 #if DYNAMIC_EXECUTION
   PRINTF
@@ -358,34 +353,34 @@ sim_cmd_break (int argc, char **argv)	/* set/clear breakpoint */
   addr = strtoul (argv[1], &p, 0);
   if (*p)
     {
-      l = find_label (argv[1]);
+      l = find_label (sim, argv[1]);
       if (l)
-	set_insnbrkpoint (l->addr);
+	set_insnbrkpoint (sim, l->addr);
       else
 	PRINTF ("Label `%s' does not exist\n", argv[1]);
     }
   else
-    set_insnbrkpoint (addr);
+    set_insnbrkpoint (sim, addr);
   return 0;
 #endif
 }
 
 static int
-sim_cmd_r (int argc, char **argv)	/* dump regs */
+sim_cmd_r (or1ksim *sim, int argc, char **argv)	/* dump regs */
 {
-  dumpreg ();
+  dumpreg (sim);
   return 0;
 }
 
 static int
-sim_cmd_de (int argc, char **argv)	/* disassemble */
+sim_cmd_de (or1ksim *sim, int argc, char **argv)	/* disassemble */
 {
   static oraddr_t from = 0, to = 0;
 
   if (argc >= 2)
     {
       if (argv[1][0] == '_')
-	from = eval_label (argv[1]);
+	from = eval_label (sim, argv[1]);
       else
 	from = strtoul (argv[1], NULL, 0);
       to = from + 0x40;
@@ -394,30 +389,30 @@ sim_cmd_de (int argc, char **argv)	/* disassemble */
   if (argc >= 3)
     to = strtoul (argv[2], NULL, 0);
 
-  disassemble_memory (from, to, 1);
+  disassemble_memory (sim, from, to, 1);
   PRINTF ("\n");
   return 0;
 }
 
 static int
-sim_cmd_reset (int argc, char **argv)	/* reset simulator */
+sim_cmd_reset (or1ksim *sim, int argc, char **argv)	/* reset simulator */
 {
-  sim_reset ();
+  sim_reset (sim);
   return 0;
 }
 
 static int
-sim_cmd_hist (int argc, char **argv)	/* dump history */
+sim_cmd_hist (or1ksim *sim, int argc, char **argv)	/* dump history */
 {
   int i;
   struct hist_exec *cur;
-  if (!config.sim.history)
+  if (!sim->config.sim.history)
     {
       PRINTF ("Simulation history disabled.\n");
       return 0;
     }
-  for (i = HISTEXEC_LEN, cur = hist_exec_tail->next; i; i--, cur = cur->next)
-    disassemble_memory (cur->addr, cur->addr + 4, 1);
+  for (i = HISTEXEC_LEN, cur = sim->hist_exec_tail->next; i; i--, cur = cur->next)
+    disassemble_memory (sim, cur->addr, cur->addr + 4, 1);
   PRINTF ("\n");
   return 0;
 }
@@ -425,67 +420,67 @@ sim_cmd_hist (int argc, char **argv)	/* dump history */
 /* Called when it is suspisous that runtime.sim.instructions has reached
  * to_insn_num */
 void
-check_insn_exec (void *dat)
+check_insn_exec (or1ksim *sim, void *dat)
 {
-  if (runtime.cpu.instructions < to_insn_num)
+  if (sim->runtime.cpu.instructions < sim->to_insn_num)
     {
       /* Instruction count has not yet been reached, reschedule */
-      long long int delta = to_insn_num - runtime.cpu.instructions;
+      long long int delta = sim->to_insn_num - sim->runtime.cpu.instructions;
       SCHED_ADD (check_insn_exec, NULL,
 		 (delta > INT32_MAX) ? INT32_MAX : delta);
       return;
     }
-  handle_sim_command ();
+  handle_sim_command (sim);
 }
 
 void
-print_insn_exec (void *dat)
+print_insn_exec (or1ksim *sim, void *dat)
 {
-  dumpreg ();
-  if (runtime.cpu.instructions < to_insn_num)
+  dumpreg (sim);
+  if (sim->runtime.cpu.instructions < sim->to_insn_num)
     {
       /* Instruction count has not yet been reached, reschedule */
-      sched_next_insn (print_insn_exec, NULL);
+      sched_next_insn (sim, print_insn_exec, NULL);
       return;
     }
-  handle_sim_command ();
+  handle_sim_command (sim);
 }
 
 static int
-sim_cmd_run (int argc, char **argv)	/* run */
+sim_cmd_run (or1ksim *sim, int argc, char **argv)	/* run */
 {
-  runtime.sim.hush = 0;
+  sim->runtime.sim.hush = 0;
   if (argc >= 3)
     {
       if (!strcmp (argv[2], "hush"))
-	runtime.sim.hush = 1;
+	sim->runtime.sim.hush = 1;
     }
 
   if (argc >= 2)
     {
-      if ((to_insn_num = strtoll (argv[1], NULL, 0)) != -1)
+      if ((sim->to_insn_num = strtoll (argv[1], NULL, 0)) != -1)
 	{
-	  if (runtime.sim.hush)
+	  if (sim->runtime.sim.hush)
 	    {
 	      /* Schedule a job to run in to_insn_num cycles time since an instruction
 	       * may execute in only 1 cycle.  check_insn_exec will check if the right
 	       * number of instructions have been executed.  If not it will
 	       * reschedule.  */
 	      SCHED_ADD (check_insn_exec, NULL,
-			 (to_insn_num > INT32_MAX) ? INT32_MAX : to_insn_num);
+			 (sim->to_insn_num > INT32_MAX) ? INT32_MAX : sim->to_insn_num);
 	    }
 	  else
 	    {
 	      /* The user wants to see the execution dumps.  Schedule a task to show
 	       * it to him after each cycle */
-	      sched_next_insn (print_insn_exec, NULL);
+	      sched_next_insn (sim, print_insn_exec, NULL);
 	    }
-	  to_insn_num += runtime.cpu.instructions;
+	  sim->to_insn_num += sim->runtime.cpu.instructions;
 	}
       else
 	{
-	  if (!runtime.sim.hush)
-	    sched_next_insn (print_insn_exec, NULL);
+	  if (!sim->runtime.sim.hush)
+	    sched_next_insn (sim, print_insn_exec, NULL);
 	}
     }
   else
@@ -496,33 +491,33 @@ sim_cmd_run (int argc, char **argv)	/* run */
 }
 
 static int
-sim_cmd_stall (int argc, char **argv)	/* Added by CZ 210801 */
+sim_cmd_stall (or1ksim *sim, int argc, char **argv)	/* Added by CZ 210801 */
 {
 #if DYNAMIC_EXECUTION
   PRINTF ("Can't stall the cpu with the dynamic recompiler\n");
   return 0;
 #else
-  set_stall_state (1);
-  runtime.sim.iprompt = 0;
-  runtime.sim.hush = 1;
+  set_stall_state (sim, 1);
+  sim->runtime.sim.iprompt = 0;
+  sim->runtime.sim.hush = 1;
   return 1;
 #endif
 }
 
 static int
-sim_cmd_unstall (int argc, char **argv)	/* Added by CZ 210801 */
+sim_cmd_unstall (or1ksim *sim, int argc, char **argv)	/* Added by CZ 210801 */
 {
 #if DYNAMIC_EXECUTION
   PRINTF ("Can't unstall the cpu with the dynamic recompiler\n");
   return 0;
 #else
-  set_stall_state (0);
+  set_stall_state (sim, 0);
   return 0;
 #endif
 }
 
 static int
-sim_cmd_stats (int argc, char **argv)	/* stats */
+sim_cmd_stats (or1ksim *sim, int argc, char **argv)	/* stats */
 {
   if (argc != 2)
     {
@@ -532,36 +527,36 @@ sim_cmd_stats (int argc, char **argv)	/* stats */
 
   if (strcmp (argv[1], "clear") == 0)
     {
-      initstats ();
+      initstats (sim);
       PRINTF ("Cleared.\n");
     }
   else
     {
-      printstats (strtoul (argv[1], NULL, 0));
+      printstats (sim, strtoul (argv[1], NULL, 0));
     }
   return 0;
 }
 
 static int
-sim_cmd_info (int argc, char **argv)	/* configuration info */
+sim_cmd_info (or1ksim *sim, int argc, char **argv)	/* configuration info */
 {
-  struct sim_stat *cur_stat = sim_stats;
+  struct sim_stat *cur_stat = sim->sim_stats;
 
   /* Display info about various modules */
   sprs_status ();
   PRINTF ("\n");
-  memory_table_status ();
-  if (config.dc.enabled)
-    dc_info ();
+  memory_table_status (sim);
+  if (sim->config.dc.enabled)
+    dc_info (sim);
 
-  if (config.bpb.enabled)
-    bpb_info ();
-  if (config.bpb.btic)
-    btic_info ();
+  if (sim->config.bpb.enabled)
+    bpb_info (sim);
+  if (sim->config.bpb.btic)
+    btic_info (sim);
 
   while (cur_stat)
     {
-      cur_stat->stat_func (cur_stat->dat);
+      cur_stat->stat_func (sim, cur_stat->dat);
       cur_stat = cur_stat->next;
     }
 
@@ -569,47 +564,47 @@ sim_cmd_info (int argc, char **argv)	/* configuration info */
 }
 
 static int
-sim_cmd_setdbch (int argc, char **argv)	/* Toggle debug channel on/off */
+sim_cmd_setdbch (or1ksim *sim, int argc, char **argv)	/* Toggle debug channel on/off */
 {
   if (argc != 2)
     {
       PRINTF ("setdbch <channel>\n");
       return 0;
     }
-  parse_dbchs (argv[1]);
+  parse_dbchs (sim, argv[1]);
   return 0;
 }
 
 static int
-sim_cmd_debug (int argc, char **argv)	/* debug mode */
+sim_cmd_debug (or1ksim *sim, int argc, char **argv)	/* debug mode */
 {
-  config.sim.debug ^= 1;
+  sim->config.sim.debug ^= 1;
   return 0;
 }
 
 static int
-sim_cmd_profile (int argc, char **argv)	/* run profiler utility */
+sim_cmd_profile (or1ksim *sim, int argc, char **argv)	/* run profiler utility */
 {
-  return  main_profiler (argc, argv, 0);
+  return  main_profiler (sim, argc, argv, 0);
 }
 
 static int
-sim_cmd_mprofile (int argc, char **argv)	/* run mprofiler utility */
+sim_cmd_mprofile (or1ksim *sim, int argc, char **argv)	/* run mprofiler utility */
 {
-  return  main_mprofiler (argc, argv, 0);
+  return  main_mprofiler (sim, argc, argv, 0);
 }
 
 static int
-sim_cmd_cuc (int argc, char **argv)	/* run Custom Unit Compiler */
+sim_cmd_cuc (or1ksim *sim, int argc, char **argv)	/* run Custom Unit Compiler */
 {
-  main_cuc (runtime.sim.filename);
+  main_cuc (sim, sim->runtime.sim.filename);
   return 0;
 }
 
 static int
-sim_cmd_set (int argc, char **argv)	/* configuration info */
+sim_cmd_set (or1ksim *sim, int argc, char **argv)	/* configuration info */
 {
-  set_config_command (argc, argv);
+  set_config_command (sim, argc, argv);
   return 0;
 }
 
@@ -624,7 +619,7 @@ strip_space (char *str)
 struct sim_command
 {
   const char *name;
-  int (*cmd_handle) (int argc, char **argv);
+  int (*cmd_handle) (or1ksim *sim, int argc, char **argv);
 };
 
 static const struct sim_command sim_commands[] = {
@@ -663,7 +658,7 @@ static void initialize_readline (void);
 #endif
 
 void
-handle_sim_command (void)
+handle_sim_command (or1ksim *sim)
 {
   char *redirstr;
   int argc;
@@ -677,7 +672,7 @@ handle_sim_command (void)
   static char prev_str[500] = { 0 };
 #endif
 
-  runtime.sim.iprompt_run = 1;
+  sim->runtime.sim.iprompt_run = 1;
 
   /* Make sure that check_insn_exec is not left hanging in the scheduler (and
    * breaking the sim when the user doesn't want it to break). */
@@ -697,16 +692,16 @@ handle_sim_command (void)
 
       /* RSP does not get involved during CLI, so only check legacy interface
 	 here. */
-      if (config.debug.gdb_enabled)
+      if (sim->config.debug.gdb_enabled)
 	{
 	  fflush (stdout);
-	  handle_server_socket (TRUE);	/* block & check_stdin = true */
+	  handle_server_socket (sim, TRUE);	/* block & check_stdin = true */
 	}
 
       cur_arg = fgets (b2, sizeof (b2), stdin);
 
       if (!cur_arg)
-	sim_done ();
+	sim_done (sim);
 
       if (!*cur_arg)
 	{
@@ -749,9 +744,9 @@ handle_sim_command (void)
 	  *redirstr = '\0';
 
 	  redirstr = strip_space (++redirstr);
-	  runtime.sim.fout = fopen (redirstr, "w+");
-	  if (!runtime.sim.fout)
-	    runtime.sim.fout = stdout;
+	  sim->runtime.sim.fout = fopen (redirstr, "w+");
+	  if (!sim->runtime.sim.fout)
+	    sim->runtime.sim.fout = stdout;
 	}
 
       if (*cur_arg)
@@ -783,10 +778,10 @@ handle_sim_command (void)
 	    {
 	      if (!strcmp (cur_cmd->name, argv[0]))
 		{
-		  if (cur_cmd->cmd_handle (argc, argv))
+		  if (cur_cmd->cmd_handle (sim, argc, argv))
 		    {
-		      runtime.sim.iprompt = 0;
-		      runtime.sim.iprompt_run = 0;
+		      sim->runtime.sim.iprompt = 0;
+		      sim->runtime.sim.iprompt_run = 0;
 		      return;
 		    }
 		  break;
@@ -800,8 +795,8 @@ handle_sim_command (void)
       if (redirstr)
 	{
 	  redirstr = NULL;
-	  fclose (runtime.sim.fout);
-	  runtime.sim.fout = stdout;
+	  fclose (sim->runtime.sim.fout);
+	  sim->runtime.sim.fout = stdout;
 	}
 
     }

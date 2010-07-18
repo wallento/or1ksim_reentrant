@@ -1,6 +1,7 @@
 /* generic.c -- Generic external peripheral
 
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
   
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
   
@@ -46,6 +47,7 @@
 #include "toplevel-support.h"
 #include "sim-cmd.h"
 
+#include "generic.h"
 
 /*! State associated with the generic device. */
 struct dev_generic
@@ -172,10 +174,10 @@ mtohs (unsigned short int  model_val)
    endianess. */
 
 static unsigned long int
-ext_read (unsigned long int  addr,
+ext_read (or1ksim *sim,unsigned long int  addr,
 	  unsigned long int  mask)
 {
-  return config.ext.read_up (config.ext.class_ptr, addr, mask);
+  return sim->config.ext.read_up (sim->config.ext.class_ptr, addr, mask);
 
 }				/* ext_callback() */
 
@@ -185,11 +187,11 @@ ext_read (unsigned long int  addr,
    Or1ksim endianess. */
 
 static void
-ext_write (unsigned long int  addr,
+ext_write (or1ksim *sim,unsigned long int  addr,
 	   unsigned long int  mask,
 	   unsigned long int  value)
 {
-  config.ext.write_up (config.ext.class_ptr, addr, mask, value);
+  sim->config.ext.write_up (sim->config.ext.class_ptr, addr, mask, value);
 
 }				/* ext_callback() */
 
@@ -197,11 +199,11 @@ ext_write (unsigned long int  addr,
 /* I/O routines. Note that address is relative to start of address space. */
 
 static uint8_t
-generic_read_byte (oraddr_t addr, void *dat)
+generic_read_byte (or1ksim *sim,oraddr_t addr, void *dat)
 {
   struct dev_generic *dev = (struct dev_generic *) dat;
 
-  if (!config.ext.class_ptr)
+  if (!sim->config.ext.class_ptr)
     {
       fprintf (stderr, "Byte read from disabled generic device\n");
       return 0;
@@ -226,7 +228,7 @@ generic_read_byte (oraddr_t addr, void *dat)
       memset (mask_array, 0, 4);
       mask_array[bytenum] = 0xff;
 
-      res       = ext_read (wordaddr, *((unsigned int *)mask_array));
+      res       = ext_read (sim,wordaddr, *((unsigned int *)mask_array));
       res_array = (uint8_t *)(&res);
 
       return  res_array[bytenum];
@@ -235,11 +237,11 @@ generic_read_byte (oraddr_t addr, void *dat)
 
 
 static void
-generic_write_byte (oraddr_t addr, uint8_t value, void *dat)
+generic_write_byte (or1ksim *sim,oraddr_t addr, uint8_t value, void *dat)
 {
   struct dev_generic *dev = (struct dev_generic *) dat;
 
-  if (!config.ext.class_ptr)
+  if (!sim->config.ext.class_ptr)
     {
       fprintf (stderr, "Byte write to disabled generic device\n");
     }
@@ -263,7 +265,7 @@ generic_write_byte (oraddr_t addr, uint8_t value, void *dat)
       memset (value_array, 0, 4);
       value_array[bytenum] = value;
 
-      ext_write (wordaddr, *((unsigned long int *)mask_array),
+      ext_write (sim,wordaddr, *((unsigned long int *)mask_array),
 		 *((unsigned long int *)value_array));
     }
 }				/* generic_write_byte() */
@@ -271,11 +273,11 @@ generic_write_byte (oraddr_t addr, uint8_t value, void *dat)
 
 /* Result is in model endianess */
 static uint16_t
-generic_read_hw (oraddr_t addr, void *dat)
+generic_read_hw (or1ksim *sim,oraddr_t addr, void *dat)
 {
   struct dev_generic *dev = (struct dev_generic *) dat;
 
-  if (!config.ext.class_ptr)
+  if (!sim->config.ext.class_ptr)
     {
       fprintf (stderr, "Half word read from disabled generic device\n");
       return 0;
@@ -309,7 +311,7 @@ generic_read_hw (oraddr_t addr, void *dat)
       mask_array[bytenum]     = 0xff;
       mask_array[bytenum + 1] = 0xff;
 
-      res       = ext_read (wordaddr, *((unsigned int *)mask_array));
+      res       = ext_read (sim,wordaddr, *((unsigned int *)mask_array));
       res_array = (uint8_t *)(&res);
 
       hwres_array[0] = res_array[bytenum];
@@ -322,11 +324,11 @@ generic_read_hw (oraddr_t addr, void *dat)
 
 /* Value is in model endianness */
 static void
-generic_write_hw (oraddr_t addr, uint16_t value, void *dat)
+generic_write_hw (or1ksim *sim,oraddr_t addr, uint16_t value, void *dat)
 {
   struct dev_generic *dev = (struct dev_generic *) dat;
 
-  if (!config.ext.class_ptr)
+  if (!sim->config.ext.class_ptr)
     {
       fprintf (stderr, "Half word write to disabled generic device\n");
     }
@@ -362,18 +364,18 @@ generic_write_hw (oraddr_t addr, uint16_t value, void *dat)
       value_array[bytenum]     = hw_value_array[0];
       value_array[bytenum + 1] = hw_value_array[1];
 
-      ext_write (wordaddr, *((unsigned long int *)mask_array),
+      ext_write (sim,wordaddr, *((unsigned long int *)mask_array),
 		 *((unsigned long int *)value_array));
     }
 }				/* generic_write_hw() */
 
 
 static uint32_t
-generic_read_word (oraddr_t addr, void *dat)
+generic_read_word (or1ksim *sim,oraddr_t addr, void *dat)
 {
   struct dev_generic *dev = (struct dev_generic *) dat;
 
-  if (!config.ext.class_ptr)
+  if (!sim->config.ext.class_ptr)
     {
       fprintf (stderr, "Full word read from disabled generic device\n");
       return 0;
@@ -395,17 +397,17 @@ generic_read_word (oraddr_t addr, void *dat)
     {
       unsigned long wordaddr = (unsigned long int) (addr + dev->baseaddr);
 
-      return (uint32_t) htoml (ext_read (wordaddr, 0xffffffff));
+      return (uint32_t) htoml (ext_read (sim,wordaddr, 0xffffffff));
     }
 }				/* generic_read_word() */
 
 
 static void
-generic_write_word (oraddr_t addr, uint32_t value, void *dat)
+generic_write_word (or1ksim *sim,oraddr_t addr, uint32_t value, void *dat)
 {
   struct dev_generic *dev = (struct dev_generic *) dat;
 
-  if (!config.ext.class_ptr)
+  if (!sim->config.ext.class_ptr)
     {
       fprintf (stderr, "Full word write to disabled generic device\n");
     }
@@ -424,7 +426,7 @@ generic_write_word (oraddr_t addr, uint32_t value, void *dat)
       unsigned long host_value = mtohl (value);
       unsigned long wordaddr   = (unsigned long int) (addr + dev->baseaddr);
 
-      ext_write (wordaddr, 0xffffffff, host_value);
+      ext_write (sim,wordaddr, 0xffffffff, host_value);
     }
 }				/* generic_write_word() */
 
@@ -432,7 +434,7 @@ generic_write_word (oraddr_t addr, uint32_t value, void *dat)
 /* Reset is a null operation */
 
 static void
-generic_reset (void *dat)
+generic_reset (or1ksim *sim, void *dat)
 {
   return;
 
@@ -442,7 +444,7 @@ generic_reset (void *dat)
 /* Status report can only advise of configuration. */
 
 static void
-generic_status (void *dat)
+generic_status (or1ksim *sim, void *dat)
 {
   struct dev_generic *dev = (struct dev_generic *) dat;
 
@@ -473,7 +475,7 @@ generic_status (void *dat)
 /* Functions to set configuration */
 
 static void
-generic_enabled (union param_val val, void *dat)
+generic_enabled (or1ksim *sim,union param_val val, void *dat)
 {
   ((struct dev_generic *) dat)->enabled = val.int_val;
 
@@ -481,7 +483,7 @@ generic_enabled (union param_val val, void *dat)
 
 
 static void
-generic_byte_enabled (union param_val val, void *dat)
+generic_byte_enabled (or1ksim *sim,union param_val val, void *dat)
 {
   ((struct dev_generic *) dat)->byte_enabled = val.int_val;
 
@@ -489,7 +491,7 @@ generic_byte_enabled (union param_val val, void *dat)
 
 
 static void
-generic_hw_enabled (union param_val val, void *dat)
+generic_hw_enabled (or1ksim *sim,union param_val val, void *dat)
 {
   ((struct dev_generic *) dat)->hw_enabled = val.int_val;
 
@@ -497,7 +499,7 @@ generic_hw_enabled (union param_val val, void *dat)
 
 
 static void
-generic_word_enabled (union param_val val, void *dat)
+generic_word_enabled (or1ksim *sim,union param_val val, void *dat)
 {
   ((struct dev_generic *) dat)->word_enabled = val.int_val;
 
@@ -505,7 +507,7 @@ generic_word_enabled (union param_val val, void *dat)
 
 
 static void
-generic_name (union param_val val, void *dat)
+generic_name (or1ksim *sim,union param_val val, void *dat)
 {
   ((struct dev_generic *) dat)->name = strdup (val.str_val);
 
@@ -519,7 +521,7 @@ generic_name (union param_val val, void *dat)
 
 
 static void
-generic_baseaddr (union param_val val, void *dat)
+generic_baseaddr (or1ksim *sim,union param_val val, void *dat)
 {
   ((struct dev_generic *) dat)->baseaddr = val.addr_val;
 
@@ -527,7 +529,7 @@ generic_baseaddr (union param_val val, void *dat)
 
 
 static void
-generic_size (union param_val val, void *dat)
+generic_size (or1ksim *sim,union param_val val, void *dat)
 {
   ((struct dev_generic *) dat)->size = val.int_val;
 
@@ -566,7 +568,7 @@ generic_sec_start ()
 /* End of new generic section */
 
 static void
-generic_sec_end (void *dat)
+generic_sec_end (or1ksim *sim,void *dat)
 {
   struct dev_generic *generic = (struct dev_generic *) dat;
   struct mem_ops ops;
@@ -629,10 +631,10 @@ generic_sec_end (void *dat)
 
   /* Register everything */
 
-  reg_mem_area (generic->baseaddr, generic->size, 0, &ops);
+  reg_mem_area (sim, generic->baseaddr, generic->size, 0, &ops);
 
-  reg_sim_reset (generic_reset, dat);
-  reg_sim_stat (generic_status, dat);
+  reg_sim_reset (sim,generic_reset, dat);
+  reg_sim_stat (sim, generic_status, dat);
 
 }				/* generic_sec_end() */
 
@@ -640,9 +642,9 @@ generic_sec_end (void *dat)
 /* Register a generic section. */
 
 void
-reg_generic_sec (void)
+reg_generic_sec (or1ksim* sim)
 {
-  struct config_section *sec = reg_config_sec ("generic",
+  struct config_section *sec = reg_config_sec (sim, "generic",
 					       generic_sec_start,
 					       generic_sec_end);
 

@@ -3,6 +3,7 @@
 
    Copyright (C) 2000 Damjan Lampret, lampret@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -36,7 +37,7 @@
 
 
 /* Function prototypes for external use */
-extern void dumpverilog (char *verilog_modname, oraddr_t from, oraddr_t to);
-extern void dumphex (oraddr_t from, oraddr_t to);
+extern void dumpverilog (or1ksim *sim,char *verilog_modname, oraddr_t from, oraddr_t to);
+extern void dumphex (or1ksim *sim,oraddr_t from, oraddr_t to);
 
 #endif	/* DUMPVERILOG__H */

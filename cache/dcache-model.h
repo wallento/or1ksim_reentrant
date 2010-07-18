@@ -2,6 +2,7 @@
 
    Copyright (C) 1999 Damjan Lampret, lampret@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -29,24 +30,19 @@
 
 /* Package includes */
 #include "sim-config.h"
-
-
-#define MAX_DC_SETS        1024
-#define MAX_DC_WAYS          32
-#define MIN_DC_BLOCK_SIZE    16
-#define MAX_DC_BLOCK_SIZE    32
+#include "siminstance.h"
 
 /* Prototypes for external use */
 
-extern uint32_t  dc_simulate_read (oraddr_t  dataaddr,
+extern uint32_t  dc_simulate_read (or1ksim *sim,oraddr_t  dataaddr,
 				   oraddr_t  virt_addr,
 				   int       width);
-extern void      dc_simulate_write (oraddr_t  dataaddr,
+extern void      dc_simulate_write (or1ksim *sim,oraddr_t  dataaddr,
 				    oraddr_t  virt_addr,
 				    uint32_t  data,
 				    int       width);
-extern void      dc_info ();
-extern void      dc_inv (oraddr_t dataaddr);
-extern void      reg_dc_sec ();
+extern void      dc_info (or1ksim *sim);
+extern void      dc_inv (or1ksim *sim,oraddr_t dataaddr);
+extern void      reg_dc_sec (or1ksim* sim);
 
 #endif	/* DCACHE_MODEL__H */

@@ -2,6 +2,7 @@
 
    Copyright (C) 1999 Damjan Lampret, lampret@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
   
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
   
@@ -39,7 +40,7 @@
 #include "execute.h"
 
 
-#define WARNING(s) fprintf (stderr, "Warning: config.%s: %s\n", cur_section->name, (s))
+#define WARNING(s) fprintf (stderr, "Warning: config.%s: %s\n", sim->cur_section->name, (s))
 
 /*---------------------------------------------------------------------------*/
 /*!Set the CPU version
@@ -50,7 +51,7 @@
    @param[in] dat  The config data structure (not used here)                 */
 /*---------------------------------------------------------------------------*/
 static void
-cpu_ver (union param_val  val,
+cpu_ver (or1ksim *sim,union param_val  val,
 	 void            *dat)
 {
   if (val.int_val > 0xff)
@@ -58,8 +59,8 @@ cpu_ver (union param_val  val,
       WARNING ("CPU version > 8 bits truncated\n");
     }
 
-  cpu_state.sprs[SPR_VR] &= ~SPR_VR_VER;
-  cpu_state.sprs[SPR_VR] |= (val.int_val & 0xff) << SPR_VR_VER_OFF;
+  sim->cpu_state.sprs[SPR_VR] &= ~SPR_VR_VER;
+  sim->cpu_state.sprs[SPR_VR] |= (val.int_val & 0xff) << SPR_VR_VER_OFF;
 
 }	/* cpu_ver() */
 
@@ -73,7 +74,7 @@ cpu_ver (union param_val  val,
    @param[in] dat  The config data structure (not used here)                 */
 /*---------------------------------------------------------------------------*/
 static void
-cpu_cfg (union param_val  val,
+cpu_cfg (or1ksim *sim,union param_val  val,
 	 void            *dat)
 {
   if (val.int_val > 0xff)
@@ -81,8 +82,8 @@ cpu_cfg (union param_val  val,
       WARNING ("CPU configuration > 8 bits truncated\n");
     }
 
-  cpu_state.sprs[SPR_VR] &= ~SPR_VR_CFG;
-  cpu_state.sprs[SPR_VR] |= (val.int_val & 0xff) << SPR_VR_CFG_OFF;
+  sim->cpu_state.sprs[SPR_VR] &= ~SPR_VR_CFG;
+  sim->cpu_state.sprs[SPR_VR] |= (val.int_val & 0xff) << SPR_VR_CFG_OFF;
 
 }	/* cpu_cfg() */
 
@@ -97,7 +98,7 @@ cpu_cfg (union param_val  val,
    @param[in] dat  The config data structure (not used here)                 */
 /*---------------------------------------------------------------------------*/
 static void
-cpu_rev (union param_val  val,
+cpu_rev (or1ksim *sim,union param_val  val,
 	 void            *dat)
 {
   if (val.int_val > 0x3f)
@@ -105,16 +106,16 @@ cpu_rev (union param_val  val,
       WARNING ("CPU revision > 6 bits truncated\n");
     }
 
-  cpu_state.sprs[SPR_VR] &= ~SPR_VR_REV_OFF ;
-  cpu_state.sprs[SPR_VR] |= (val.int_val & 0x3f) << SPR_VR_REV_OFF ;
+  sim->cpu_state.sprs[SPR_VR] &= ~SPR_VR_REV_OFF ;
+  sim->cpu_state.sprs[SPR_VR] |= (val.int_val & 0x3f) << SPR_VR_REV_OFF ;
 
 }	/* cpu_rev() */
 
 
 static void
-cpu_upr (union param_val val, void *dat)
+cpu_upr (or1ksim *sim,union param_val val, void *dat)
 {
-  cpu_state.sprs[SPR_UPR] = val.int_val;
+  sim->cpu_state.sprs[SPR_UPR] = val.int_val;
 }
 
 /*---------------------------------------------------------------------------*/
@@ -129,7 +130,7 @@ cpu_upr (union param_val val, void *dat)
    @param[in] dat  The config data structure (not used here)                 */
 /*---------------------------------------------------------------------------*/
 static void
-cpu_cfgr (union param_val  val,
+cpu_cfgr (or1ksim *sim,union param_val  val,
 	  void            *dat)
 {
   if (SPR_CPUCFGR_OB32S != val.int_val)
@@ -137,7 +138,7 @@ cpu_cfgr (union param_val  val,
       WARNING ("CPU configuration: only OB32S currently supported\n");
     }
 
-  cpu_state.sprs[SPR_CPUCFGR] = val.int_val;
+  sim->cpu_state.sprs[SPR_CPUCFGR] = val.int_val;
 
 }	/* cpu_cfgr() */
 
@@ -155,7 +156,7 @@ cpu_cfgr (union param_val  val,
    @param[in] dat  The config data structure (not used here)                 */
 /*---------------------------------------------------------------------------*/
 static void
-cpu_sr (union param_val  val,
+cpu_sr (or1ksim *sim,union param_val  val,
 	void            *dat)
 {
   if (0 != (val.int_val & 0xf0000000))
@@ -167,44 +168,44 @@ cpu_sr (union param_val  val,
       WARNING ("Supervision Register reserved bits set: ignored\n");
     }
 
-  cpu_state.sprs[SPR_SR] = val.int_val;
+  sim->cpu_state.sprs[SPR_SR] = val.int_val;
 
 }	/* cpu_sr() */
 
 
 static void
-cpu_hazards (union param_val val, void *dat)
+cpu_hazards (or1ksim *sim, union param_val val, void *dat)
 {
-  config.cpu.hazards = val.int_val;
+  sim->config.cpu.hazards = val.int_val;
 }
 
 static void
-cpu_superscalar (union param_val val, void *dat)
+cpu_superscalar (or1ksim *sim, union param_val val, void *dat)
 {
-  config.cpu.superscalar = val.int_val;
+  sim->config.cpu.superscalar = val.int_val;
 }
 
 static void
-cpu_dependstats (union param_val val, void *dat)
+cpu_dependstats (or1ksim *sim, union param_val val, void *dat)
 {
-  config.cpu.dependstats = val.int_val;
+  sim->config.cpu.dependstats = val.int_val;
 }
 
 static void
-cpu_sbuf_len (union param_val val, void *dat)
+cpu_sbuf_len (or1ksim *sim, union param_val val, void *dat)
 {
   if (val.int_val >= MAX_SBUF_LEN)
     {
-      config.cpu.sbuf_len = MAX_SBUF_LEN - 1;
+      sim->config.cpu.sbuf_len = MAX_SBUF_LEN - 1;
       WARNING ("sbuf_len too large; truncated.");
     }
   else if (val.int_val < 0)
     {
-      config.cpu.sbuf_len = 0;
+      sim->config.cpu.sbuf_len = 0;
       WARNING ("sbuf_len negative; disabled.");
     }
   else
-    config.cpu.sbuf_len = val.int_val;
+    sim->config.cpu.sbuf_len = val.int_val;
 }
 
 /*---------------------------------------------------------------------------*/
@@ -217,9 +218,9 @@ cpu_sbuf_len (union param_val val, void *dat)
    default values are set in init_defconfig().                               */
 /*---------------------------------------------------------------------------*/
 void
-reg_cpu_sec ()
+reg_cpu_sec (or1ksim *sim)
 {
-  struct config_section *sec = reg_config_sec ("cpu", NULL, NULL);
+  struct config_section *sec = reg_config_sec (sim, "cpu", NULL, NULL);
 
   reg_config_param (sec, "ver",         paramt_int, cpu_ver);
   reg_config_param (sec, "cfg",         paramt_int, cpu_cfg);

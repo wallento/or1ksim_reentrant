@@ -2,6 +2,7 @@
 
    Copyright (C) 1999 Damjan Lampret, lampret@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -92,7 +93,7 @@
 
 /*
  * Bit definitions for the Line Control Register
- * 
+ *
  */
 #define UART_LCR_DLAB 0x80	/* Divisor latch access bit */
 #define UART_LCR_SBC  0x40	/* Set break control */
@@ -250,13 +251,13 @@ struct dev_16450
 };
 
 /* Forward declarations of static functions */
-static void uart_recv_break (void *dat);
-static void uart_recv_char (void *dat);
-static void uart_check_char (void *dat);
-static void uart_sched_recv_check (struct dev_16450 *uart);
-static void uart_vapi_cmd (void *dat);
-static void uart_clear_int (struct dev_16450 *uart, int intr);
-static void uart_tx_send (void *dat);
+static void uart_recv_break (or1ksim *sim,void *dat);
+static void uart_recv_char (or1ksim *sim,void *dat);
+static void uart_check_char (or1ksim *sim,void *dat);
+static void uart_sched_recv_check (or1ksim *sim, struct dev_16450 *uart);
+static void uart_vapi_cmd (or1ksim *sim,void *dat);
+static void uart_clear_int (or1ksim *sim,struct dev_16450 *uart, int intr);
+static void uart_tx_send (or1ksim *sim,void *dat);
 
 
 /* Number of clock cycles (one clock cycle is when UART_CLOCK_DIVIDER simulator
@@ -287,7 +288,7 @@ char_clks (int dll, int dlh, int lcr)
 /* Signals the specified interrupt.  If a higher priority interrupt is already
  * pending, do nothing */
 static void
-uart_int_msi (void *dat)
+uart_int_msi (or1ksim *sim,void *dat)
 {
   struct dev_16450 *uart = dat;
 
@@ -299,12 +300,12 @@ uart_int_msi (void *dat)
   if ((uart->regs.iir & UART_IIR_NO_INT) || (uart->regs.iir == UART_IIR_MSI))
     {
       uart->regs.iir = UART_IIR_MSI;
-      report_interrupt (uart->irq);
+      report_interrupt (sim,uart->irq);
     }
 }
 
 static void
-uart_int_thri (void *dat)
+uart_int_thri (or1ksim *sim,void *dat)
 {
   struct dev_16450 *uart = dat;
 
@@ -317,12 +318,12 @@ uart_int_thri (void *dat)
       || (uart->regs.iir == UART_IIR_THRI))
     {
       uart->regs.iir = UART_IIR_THRI;
-      report_interrupt (uart->irq);
+      report_interrupt (sim,uart->irq);
     }
 }
 
 static void
-uart_int_cti (void *dat)
+uart_int_cti (or1ksim *sim,void *dat)
 {
   struct dev_16450 *uart = dat;
 
@@ -334,12 +335,12 @@ uart_int_cti (void *dat)
   if ((uart->regs.iir != UART_IIR_RLSI) && (uart->regs.iir != UART_IIR_RDI))
     {
       uart->regs.iir = UART_IIR_CTI;
-      report_interrupt (uart->irq);
+      report_interrupt (sim,uart->irq);
     }
 }
 
 static void
-uart_int_rdi (void *dat)
+uart_int_rdi (or1ksim *sim,void *dat)
 {
   struct dev_16450 *uart = dat;
 
@@ -351,12 +352,12 @@ uart_int_rdi (void *dat)
   if (uart->regs.iir != UART_IIR_RLSI)
     {
       uart->regs.iir = UART_IIR_RDI;
-      report_interrupt (uart->irq);
+      report_interrupt (sim,uart->irq);
     }
 }
 
 static void
-uart_int_rlsi (void *dat)
+uart_int_rlsi (or1ksim *sim,void *dat)
 {
   struct dev_16450 *uart = dat;
 
@@ -367,62 +368,62 @@ uart_int_rlsi (void *dat)
 
   /* Highest priority interrupt */
   uart->regs.iir = UART_IIR_RLSI;
-  report_interrupt (uart->irq);
+  report_interrupt (sim,uart->irq);
 }
 
 /* Checks to see if an RLSI interrupt is due and schedules one if need be */
 static void
-uart_check_rlsi (void *dat)
+uart_check_rlsi (or1ksim *sim,void *dat)
 {
   struct dev_16450 *uart = dat;
 
   if (uart->regs.lsr & (UART_LSR_OVRRUN | UART_LSR_PARITY | UART_LSR_FRAME |
 			UART_LSR_BREAK))
-    uart_int_rlsi (uart);
+    uart_int_rlsi (sim,uart);
 }
 
 /* Checks to see if an RDI interrupt is due and schedules one if need be */
 static void
-uart_check_rdi (void *dat)
+uart_check_rdi (or1ksim *sim,void *dat)
 {
   struct dev_16450 *uart = dat;
 
   if (uart->istat.rxbuf_full >= UART_FIFO_TRIGGER (uart->regs.fcr >> 6))
     {
-      uart_int_rdi (uart);
+      uart_int_rdi (sim,uart);
     }
 }
 
 /* Raises the next highest priority interrupt */
 static void
-uart_next_int (struct dev_16450 *uart)
+uart_next_int (or1ksim *sim,struct dev_16450 *uart)
 {
   /* Interrupt detection in proper priority order. */
   if ((uart->istat.ints & (1 << UART_IIR_RLSI)) &&
       (uart->regs.ier & UART_IER_RLSI))
-    uart_int_rlsi (uart);
+    uart_int_rlsi (sim,uart);
   else if ((uart->istat.ints & (1 << UART_IIR_RDI)) &&
 	   (uart->regs.ier & UART_IER_RDI))
-    uart_int_rdi (uart);
+    uart_int_rdi (sim,uart);
   else if ((uart->istat.ints & (1 << UART_IIR_CTI)) &&
 	   (uart->regs.ier & UART_IER_RDI))
-    uart_int_cti (uart);
+    uart_int_cti (sim,uart);
   else if ((uart->istat.ints & (1 << UART_IIR_THRI)) &&
 	   (uart->regs.ier & UART_IER_THRI))
-    uart_int_thri (uart);
+    uart_int_thri (sim,uart);
   else if ((uart->istat.ints & (1 << UART_IIR_MSI)) &&
 	   (uart->regs.ier & UART_IER_MSI))
-    uart_int_msi (uart);
+    uart_int_msi (sim,uart);
   else
     {
-      clear_interrupt (uart->irq);
+      clear_interrupt (sim,uart->irq);
       uart->regs.iir = UART_IIR_NO_INT;
     }
 }
 
 /* Clears potentially pending interrupts */
 static void
-uart_clear_int (struct dev_16450 *uart, int intr)
+uart_clear_int (or1ksim *sim,struct dev_16450 *uart, int intr)
 {
   uart->istat.ints &= ~(1 << intr);
 
@@ -433,12 +434,12 @@ uart_clear_int (struct dev_16450 *uart, int intr)
   if (intr != uart->regs.iir)
     return;
 
-  uart_next_int (uart);
+  uart_next_int (sim,uart);
 }
 
 /*----------------------------------------------------[ Loopback handling ]---*/
 static void
-uart_loopback (struct dev_16450 *uart)
+uart_loopback (or1ksim *sim,struct dev_16450 *uart)
 {
   if (!(uart->regs.mcr & UART_MCR_LOOP))
     return;
@@ -468,13 +469,13 @@ uart_loopback (struct dev_16450 *uart)
 
   if (uart->regs.msr & (UART_MSR_DCTS | UART_MSR_DDSR | UART_MSR_TERI |
 			UART_MSR_DDCD))
-    uart_int_msi (uart);
+    uart_int_msi (sim,uart);
 }
 
 /*----------------------------------------------------[ Transmitter logic ]---*/
 /* Sends the data in the shift register to the outside world */
 static void
-send_char (struct dev_16450 *uart, int bits_send)
+send_char (or1ksim *sim, struct dev_16450 *uart, int bits_send)
 {
   PRINTF ("%c", (char) uart->iregs.txser);
   if (uart->regs.mcr & UART_MCR_LOOP)
@@ -548,7 +549,7 @@ send_char (struct dev_16450 *uart, int bits_send)
 	  data |=
 	    (uart->vapi.lcr << 8) | (pe << 16) | (fe << 17) | (uart->vapi.
 							       lcr << 8);
-	  vapi_send (uart->vapi_id, data);
+	  vapi_send (sim, uart->vapi_id, data);
 	}
       else
 	{
@@ -560,39 +561,39 @@ send_char (struct dev_16450 *uart, int bits_send)
 
 /* Called when all the bits have been shifted out of the shift register */
 void
-uart_char_clock (void *dat)
+uart_char_clock (or1ksim *sim,void *dat)
 {
   struct dev_16450 *uart = dat;
 
   /* We've sent all bits */
-  send_char (uart, (uart->regs.lcr & UART_LCR_WLEN8) + 5);
+  send_char (sim, uart, (uart->regs.lcr & UART_LCR_WLEN8) + 5);
 
   if (!uart->istat.txbuf_full)
     uart->regs.lsr |= UART_LSR_TXSERE;
   else
-    uart_tx_send (uart);
+    uart_tx_send (sim,uart);
 }
 
 /* Called when a break has been shifted out of the shift register */
 void
-uart_send_break (void *dat)
+uart_send_break (or1ksim *sim,void *dat)
 {
   struct dev_16450 *uart = dat;
 
   /* Send one break signal */
-  vapi_send (uart->vapi_id, UART_LCR_SBC << 8);
+  vapi_send (sim, uart->vapi_id, UART_LCR_SBC << 8);
 
   /* Send the next char (if there is one) */
   if (!uart->istat.txbuf_full)
     uart->regs.lsr |= UART_LSR_TXSERE;
   else
-    uart_tx_send (uart);
+    uart_tx_send (sim,uart);
 }
 
 /* Scheduled whenever the TX buffer has characters in it and we aren't sending
  * a character. */
 void
-uart_tx_send (void *dat)
+uart_tx_send (or1ksim *sim,void *dat)
 {
   struct dev_16450 *uart = dat;
 
@@ -617,24 +618,24 @@ uart_tx_send (void *dat)
   if (!uart->istat.txbuf_full)
     {
       uart->regs.lsr |= UART_LSR_TXBUFE;
-      uart_int_thri (uart);
+      uart_int_thri (sim,uart);
     }
 }
 
 /*-------------------------------------------------------[ Receiver logic ]---*/
 /* Adds a character to the RX FIFO */
 static void
-uart_add_char (struct dev_16450 *uart, int ch)
+uart_add_char (or1ksim *sim,struct dev_16450 *uart, int ch)
 {
   uart->regs.lsr |= UART_LSR_RDRDY;
-  uart_clear_int (uart, UART_IIR_CTI);
+  uart_clear_int (sim,uart, UART_IIR_CTI);
   SCHED_ADD (uart_int_cti, uart,
 	     uart->char_clks * UART_CHAR_TIMEOUT * UART_CLOCK_DIVIDER);
 
   if (uart->istat.rxbuf_full + 1 > uart->fifo_len)
     {
       uart->regs.lsr |= UART_LSR_OVRRUN | UART_LSR_RXERR;
-      uart_int_rlsi (uart);
+      uart_int_rlsi (sim,uart);
     }
   else
     {
@@ -643,16 +644,16 @@ uart_add_char (struct dev_16450 *uart, int ch)
       if (!uart->istat.rxbuf_full++)
 	{
 	  uart->regs.lsr |= ch >> 8;
-	  uart_check_rlsi (uart);
+	  uart_check_rlsi (sim,uart);
 	}
     }
-  uart_check_rdi (uart);
+  uart_check_rdi (sim,uart);
 }
 
 /* Called when a break sequence is about to start.  It stops receiveing
  * characters and schedules the uart_recv_break to send the break */
 static void
-uart_recv_break_start (void *dat)
+uart_recv_break_start (or1ksim *sim,void *dat)
 {
   struct dev_16450 *uart = dat;
 
@@ -662,7 +663,7 @@ uart_recv_break_start (void *dat)
   SCHED_FIND_REMOVE (uart_recv_char, uart);
 
   if (uart->vapi_id && (uart->vapi_buf_head_ptr != uart->vapi_buf_tail_ptr))
-    uart_vapi_cmd (uart);
+    uart_vapi_cmd (sim,uart);
 
   SCHED_ADD (uart_recv_break, uart,
 	     UART_BREAK_COUNT * uart->vapi.char_clks * UART_CLOCK_DIVIDER);
@@ -670,7 +671,7 @@ uart_recv_break_start (void *dat)
 
 /* Stops sending breaks and starts receiveing characters */
 static void
-uart_recv_break_stop (void *dat)
+uart_recv_break_stop (or1ksim *sim,void *dat)
 {
   struct dev_16450 *uart = dat;
 
@@ -680,17 +681,17 @@ uart_recv_break_stop (void *dat)
 
 /* Receives a break */
 static void
-uart_recv_break (void *dat)
+uart_recv_break (or1ksim *sim,void *dat)
 {
   struct dev_16450 *uart = dat;
   unsigned lsr = UART_LSR_BREAK | UART_LSR_RXERR | UART_LSR_RDRDY;
 
-  uart_add_char (uart, lsr << 8);
+  uart_add_char (sim,uart, lsr << 8);
 }
 
 /* Moves a character from the serial register to the RX FIFO */
 static void
-uart_recv_char (void *dat)
+uart_recv_char (or1ksim *sim,void *dat)
 {
   struct dev_16450 *uart = dat;
   uint16_t char_to_add;
@@ -710,18 +711,18 @@ uart_recv_char (void *dat)
   else
     {
       uart->istat.receiveing = 0;
-      uart_sched_recv_check (uart);
+      uart_sched_recv_check (sim, uart);
       if (uart->vapi_id
 	  && (uart->vapi_buf_head_ptr != uart->vapi_buf_tail_ptr))
 	SCHED_ADD (uart_vapi_cmd, uart, 0);
     }
 
-  uart_add_char (uart, char_to_add);
+  uart_add_char (sim,uart, char_to_add);
 }
 
 /* Checks if there is a character waiting to be received */
 static void
-uart_check_char (void *dat)
+uart_check_char (or1ksim *sim,void *dat)
 {
   struct dev_16450 *uart = dat;
   uint8_t buffer;
@@ -749,7 +750,7 @@ uart_check_char (void *dat)
 }
 
 static void
-uart_sched_recv_check (struct dev_16450 *uart)
+uart_sched_recv_check (or1ksim *sim, struct dev_16450 *uart)
 {
   if (!uart->vapi_id)
     SCHED_ADD (uart_check_char, uart,
@@ -759,7 +760,7 @@ uart_sched_recv_check (struct dev_16450 *uart)
 /*----------------------------------------------------[ UART I/O handling ]---*/
 /* Set a specific UART register with value. */
 static void
-uart_write_byte (oraddr_t addr, uint8_t value, void *dat)
+uart_write_byte (or1ksim *sim,oraddr_t addr, uint8_t value, void *dat)
 {
   struct dev_16450 *uart = dat;
 
@@ -793,7 +794,7 @@ uart_write_byte (oraddr_t addr, uint8_t value, void *dat)
       else
 	uart->regs.txbuf[uart->istat.txbuf_head] = value;
 
-      uart_clear_int (uart, UART_IIR_THRI);
+      uart_clear_int (sim,uart, UART_IIR_THRI);
       break;
     case UART_FCR:
       uart->regs.fcr = value & UART_VALID_FCR;
@@ -810,7 +811,7 @@ uart_write_byte (oraddr_t addr, uint8_t value, void *dat)
 	  /* For FIFO-mode only, THRE interrupt is set when THR and FIFO are empty
 	   */
 	  if (uart->fifo_len == 16)
-	    uart_int_thri (uart);
+	    uart_int_thri (sim,uart);
 
 	  SCHED_FIND_REMOVE (uart_tx_send, uart);
 	}
@@ -819,13 +820,13 @@ uart_write_byte (oraddr_t addr, uint8_t value, void *dat)
 	  uart->istat.rxbuf_head = uart->istat.rxbuf_tail = 0;
 	  uart->istat.rxbuf_full = 0;
 	  uart->regs.lsr &= ~UART_LSR_RDRDY;
-	  uart_clear_int (uart, UART_IIR_RDI);
-	  uart_clear_int (uart, UART_IIR_CTI);
+	  uart_clear_int (sim,uart, UART_IIR_RDI);
+	  uart_clear_int (sim,uart, UART_IIR_CTI);
 	}
       break;
     case UART_IER:
       uart->regs.ier = value & UART_VALID_IER;
-      uart_next_int (uart);
+      uart_next_int (sim,uart);
       break;
     case UART_LCR:
       if ((uart->regs.lcr & UART_LCR_SBC) != (value & UART_LCR_SBC))
@@ -850,7 +851,7 @@ uart_write_byte (oraddr_t addr, uint8_t value, void *dat)
       break;
     case UART_MCR:
       uart->regs.mcr = value & UART_VALID_MCR;
-      uart_loopback (uart);
+      uart_loopback (sim,uart);
       break;
     case UART_SCR:
       uart->regs.scr = value;
@@ -860,7 +861,7 @@ uart_write_byte (oraddr_t addr, uint8_t value, void *dat)
 
 /* Read a specific UART register. */
 static uint8_t
-uart_read_byte (oraddr_t addr, void *dat)
+uart_read_byte (or1ksim *sim,oraddr_t addr, void *dat)
 {
   struct dev_16450 *uart = dat;
   uint8_t value = 0;
@@ -889,8 +890,8 @@ uart_read_byte (oraddr_t addr, void *dat)
 	  uart->istat.rxbuf_full--;
 	}
 
-      uart_clear_int (uart, UART_IIR_RDI);
-      uart_clear_int (uart, UART_IIR_CTI);
+      uart_clear_int (sim,uart, UART_IIR_RDI);
+      uart_clear_int (sim,uart, UART_IIR_CTI);
 
       if (uart->istat.rxbuf_full)
 	{
@@ -899,8 +900,8 @@ uart_read_byte (oraddr_t addr, void *dat)
 	  SCHED_ADD (uart_int_cti, uart,
 		     uart->char_clks * UART_CHAR_TIMEOUT *
 		     UART_CLOCK_DIVIDER);
-	  uart_check_rlsi (uart);
-	  uart_check_rdi (uart);
+	  uart_check_rlsi (sim,uart);
+	  uart_check_rdi (sim,uart);
 	}
       else
 	{
@@ -914,7 +915,7 @@ uart_read_byte (oraddr_t addr, void *dat)
       value = (uart->regs.iir & UART_VALID_IIR) | 0xc0;
       /* Only clear the thri interrupt if it is the one we are repporting */
       if (uart->regs.iir == UART_IIR_THRI)
-	uart_clear_int (uart, UART_IIR_THRI);
+	uart_clear_int (sim,uart, UART_IIR_THRI);
       break;
     case UART_LCR:
       value = uart->regs.lcr & UART_VALID_LCR;
@@ -928,13 +929,13 @@ uart_read_byte (oraddr_t addr, void *dat)
 	~(UART_LSR_OVRRUN | UART_LSR_BREAK | UART_LSR_PARITY
 	  | UART_LSR_FRAME | UART_LSR_RXERR);
       /* Clear potentially pending RLSI interrupt */
-      uart_clear_int (uart, UART_IIR_RLSI);
+      uart_clear_int (sim,uart, UART_IIR_RLSI);
       break;
     case UART_MSR:
       value = uart->regs.msr & UART_VALID_MSR;
       uart->regs.msr = 0;
-      uart_clear_int (uart, UART_IIR_MSI);
-      uart_loopback (uart);
+      uart_clear_int (sim,uart, UART_IIR_MSI);
+      uart_loopback (sim,uart);
       break;
     case UART_SCR:
       value = uart->regs.scr;
@@ -946,7 +947,7 @@ uart_read_byte (oraddr_t addr, void *dat)
 /*--------------------------------------------------------[ VAPI handling ]---*/
 /* Decodes the read vapi command */
 static void
-uart_vapi_cmd (void *dat)
+uart_vapi_cmd (or1ksim *sim,void *dat)
 {
   struct dev_16450 *uart = dat;
   int received = 0;
@@ -1025,7 +1026,7 @@ uart_vapi_cmd (void *dat)
 		  /* If data & 0xffff is 0 then set the break imediatly and handle the
 		   * following commands as appropriate */
 		  if (!(data & 0xffff))
-		    uart_recv_break_start (uart);
+		    uart_recv_break_start (sim,uart);
 		  else
 		    /* Schedule a job to start sending breaks */
 		    SCHED_ADD (uart_recv_break_start, uart,
@@ -1036,7 +1037,7 @@ uart_vapi_cmd (void *dat)
 		  /* If data & 0xffff is 0 then release the break imediatly and handle
 		   * the following commands as appropriate */
 		  if (!(data & 0xffff))
-		    uart_recv_break_stop (uart);
+		    uart_recv_break_stop (sim,uart);
 		  else
 		    /* Schedule a job to stop sending breaks */
 		    SCHED_ADD (uart_recv_break_stop, uart,
@@ -1056,7 +1057,7 @@ uart_vapi_cmd (void *dat)
 
 /* Function that handles incoming VAPI data.  */
 static void
-uart_vapi_read (unsigned long id, unsigned long data, void *dat)
+uart_vapi_read (or1ksim *sim,unsigned long id, unsigned long data, void *dat)
 {
   struct dev_16450 *uart = dat;
   uart->vapi_buf[uart->vapi_buf_head_ptr] = data;
@@ -1067,7 +1068,7 @@ uart_vapi_read (unsigned long id, unsigned long data, void *dat)
       exit (1);
     }
   if (!uart->istat.receiveing)
-    uart_vapi_cmd (uart);
+    uart_vapi_cmd (sim,uart);
 }
 
 /*--------------------------------------------------------[ Sim callbacks ]---*/
@@ -1075,26 +1076,26 @@ uart_vapi_read (unsigned long id, unsigned long data, void *dat)
  * (re)opens all RX/TX file streams and places devices in memory address
  * space.  */
 void
-uart_reset (void *dat)
+uart_reset (or1ksim *sim,void *dat)
 {
   struct dev_16450 *uart = dat;
 
   if (uart->vapi_id)
     {
-      vapi_install_handler (uart->vapi_id, uart_vapi_read, dat);
+      vapi_install_handler (sim, uart->vapi_id, uart_vapi_read, dat);
     }
   else if (uart->channel_str && uart->channel_str[0])
     {				/* Try to create stream. */
       if (uart->channel)
 	channel_close (uart->channel);
       else
-	uart->channel = channel_init (uart->channel_str);
+	uart->channel = channel_init (sim, uart->channel_str);
       if (channel_open (uart->channel) < 0)
 	{
 	  fprintf (stderr, "Warning: problem with channel \"%s\" detected.\n",
 		   uart->channel_str);
 	}
-      else if (config.sim.verbose)
+      else if (sim->config.sim.verbose)
 	PRINTF ("UART at 0x%" PRIxADDR "\n", uart->baseaddr);
     }
   else
@@ -1145,12 +1146,12 @@ uart_reset (void *dat)
   uart->vapi_buf_tail_ptr = 0;
   memset (uart->vapi_buf, 0, sizeof (uart->vapi_buf));
 
-  uart_sched_recv_check (uart);
+  uart_sched_recv_check (sim, uart);
 }
 
 /* Print register values on stdout. */
 void
-uart_status (void *dat)
+uart_status (or1ksim *sim, void *dat)
 {
   struct dev_16450 *uart = dat;
   int i;
@@ -1190,28 +1191,28 @@ uart_status (void *dat)
 
 /*---------------------------------------------------[ UART configuration ]---*/
 static void
-uart_baseaddr (union param_val val, void *dat)
+uart_baseaddr (or1ksim *sim,union param_val val, void *dat)
 {
   struct dev_16450 *uart = dat;
   uart->baseaddr = val.addr_val;
 }
 
 static void
-uart_jitter (union param_val val, void *dat)
+uart_jitter (or1ksim *sim,union param_val val, void *dat)
 {
   struct dev_16450 *uart = dat;
   uart->jitter = val.int_val;
 }
 
 static void
-uart_irq (union param_val val, void *dat)
+uart_irq (or1ksim *sim,union param_val val, void *dat)
 {
   struct dev_16450 *uart = dat;
   uart->irq = val.int_val;
 }
 
 static void
-uart_16550 (union param_val val, void *dat)
+uart_16550 (or1ksim *sim,union param_val val, void *dat)
 {
   struct dev_16450 *uart = dat;
   uart->uart16550 = val.int_val;
@@ -1226,7 +1227,7 @@ uart_16550 (union param_val val, void *dat)
    @param[in] dat  The config data structure                                 */
 /*---------------------------------------------------------------------------*/
 static void
-uart_channel (union param_val  val,
+uart_channel (or1ksim *sim,union param_val  val,
 	      void            *dat)
 {
   struct dev_16450 *uart = dat;
@@ -1247,21 +1248,21 @@ uart_channel (union param_val  val,
 
 
 static void
-uart_newway (union param_val val, void *dat)
+uart_newway (or1ksim *sim,union param_val val, void *dat)
 {
   fprintf (stderr, "Warning: txfile and rxfile now obsolete and ignored. "
 	   "Use 'channel = \"file:rxfile,txfile\"'.");
 }
 
 static void
-uart_vapi_id (union param_val val, void *dat)
+uart_vapi_id (or1ksim *sim,union param_val val, void *dat)
 {
   struct dev_16450 *uart = dat;
   uart->vapi_id = val.int_val;
 }
 
 static void
-uart_enabled (union param_val val, void *dat)
+uart_enabled (or1ksim *sim,union param_val val, void *dat)
 {
   struct dev_16450 *uart = dat;
   uart->enabled = val.int_val;
@@ -1300,7 +1301,7 @@ uart_sec_start ()
 
 
 static void
-uart_sec_end (void *dat)
+uart_sec_end (or1ksim *sim,void *dat)
 {
   struct dev_16450 *uart = dat;
   struct mem_ops ops;
@@ -1322,16 +1323,16 @@ uart_sec_end (void *dat)
   ops.delayr = 2;
   ops.delayw = 2;
 
-  reg_mem_area (uart->baseaddr, UART_ADDR_SPACE, 0, &ops);
+  reg_mem_area (sim, uart->baseaddr, UART_ADDR_SPACE, 0, &ops);
 
-  reg_sim_reset (uart_reset, dat);
-  reg_sim_stat (uart_status, dat);
+  reg_sim_reset (sim, (void*)uart_reset, dat);
+  reg_sim_stat (sim, uart_status, dat);
 }
 
 void
-reg_uart_sec (void)
+reg_uart_sec (or1ksim* sim)
 {
-  struct config_section *sec = reg_config_sec ("uart", uart_sec_start,
+  struct config_section *sec = reg_config_sec (sim, "uart", uart_sec_start,
 					       uart_sec_end);
 
   reg_config_param (sec, "enabled", paramt_int, uart_enabled);

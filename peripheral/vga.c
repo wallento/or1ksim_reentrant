@@ -2,6 +2,7 @@
 
    Copyright (C) 2001 Marko Mlinar, markom@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -85,7 +86,7 @@ struct vga_state
 
 /* Write a register */
 void
-vga_write32 (oraddr_t addr, uint32_t value, void *dat)
+vga_write32 (or1ksim *sim, oraddr_t addr, uint32_t value, void *dat)
 {
   struct vga_state *vga = dat;
 
@@ -135,7 +136,7 @@ vga_write32 (oraddr_t addr, uint32_t value, void *dat)
 
 /* Read a register */
 uint32_t
-vga_read32 (oraddr_t addr, void *dat)
+vga_read32 (or1ksim *sim, oraddr_t addr, void *dat)
 {
   struct vga_state *vga = dat;
 
@@ -211,7 +212,7 @@ typedef struct
 
 /* Dumps a bmp file, based on current image */
 static int
-vga_dump_image (char *filename, struct vga_state *vga)
+vga_dump_image (or1ksim *sim,char *filename, struct vga_state *vga)
 {
   int sx = vga->hlen;
   int sy = vga->vlen;
@@ -277,7 +278,7 @@ vga_dump_image (char *filename, struct vga_state *vga)
       for (x = 0; x < sx; x++)
 	{
 	  unsigned long pixel =
-	    eval_direct32 (vga->vbar[vga->vbindex] + (y * sx + x) * (bpp + 1),
+	    eval_direct32 (sim,vga->vbar[vga->vbindex] + (y * sx + x) * (bpp + 1),
 			   0, 0);
 	  if (!fwrite (&pixel, sizeof (pixel), 1, fo))
 	    return 1;
@@ -292,20 +293,20 @@ vga_dump_image (char *filename, struct vga_state *vga)
 #endif /* !__BIG_ENDIAN__ */
 
 void
-vga_job (void *dat)
+vga_job (or1ksim *sim,void *dat)
 {
   struct vga_state *vga = dat;
   /* dump the image? */
   char temp[STR_SIZE];
   sprintf (temp, "%s%04i.bmp", vga->filename, vga->pics++);
-  vga_dump_image (temp, vga);
+  vga_dump_image (sim,temp, vga);
 
   SCHED_ADD (vga_job, dat, vga->refresh_rate);
 }
 
 /* Reset all VGAs */
 void
-vga_reset (void *dat)
+vga_reset (or1ksim *sim, void *dat)
 {
   struct vga_state *vga = dat;
 
@@ -330,28 +331,28 @@ vga_reset (void *dat)
 
 /*----------------------------------------------------[ VGA Configuration ]---*/
 static void
-vga_enabled (union param_val val, void *dat)
+vga_enabled (or1ksim *sim,union param_val val, void *dat)
 {
   struct vga_state *vga = dat;
   vga->enabled = val.int_val;
 }
 
 static void
-vga_baseaddr (union param_val val, void *dat)
+vga_baseaddr (or1ksim *sim,union param_val val, void *dat)
 {
   struct vga_state *vga = dat;
   vga->baseaddr = val.addr_val;
 }
 
 static void
-vga_irq (union param_val val, void *dat)
+vga_irq (or1ksim *sim,union param_val val, void *dat)
 {
   struct vga_state *vga = dat;
   vga->irq = val.int_val;
 }
 
 static void
-vga_refresh_rate (union param_val val, void *dat)
+vga_refresh_rate (or1ksim *sim,union param_val val, void *dat)
 {
   struct vga_state *vga = dat;
   vga->refresh_rate = val.int_val;
@@ -366,7 +367,7 @@ vga_refresh_rate (union param_val val, void *dat)
    @param[in] dat  The config data structure                                 */
 /*---------------------------------------------------------------------------*/
 static void
-vga_filename (union param_val  val,
+vga_filename (or1ksim *sim,union param_val  val,
 	      void            *dat)
 {
   struct vga_state *vga = dat;
@@ -392,7 +393,7 @@ vga_filename (union param_val  val,
    ALL parameters are set explicitly to default values.                      */
 /*---------------------------------------------------------------------------*/
 static void *
-vga_sec_start ()
+vga_sec_start (or1ksim *sim)
 {
   struct vga_state *new = malloc (sizeof (struct vga_state));
 
@@ -405,7 +406,7 @@ vga_sec_start ()
   new->enabled      = 1;
   new->baseaddr     = 0;
   new->irq          = 0;
-  new->refresh_rate = 1000000000000ULL / 50ULL / config.sim.clkcycle_ps;
+  new->refresh_rate = 1000000000000ULL / 50ULL / sim->config.sim.clkcycle_ps;
   new->filename     = strdup ("vga_out");
 
   return new;
@@ -414,7 +415,7 @@ vga_sec_start ()
 
 
 static void
-vga_sec_end (void *dat)
+vga_sec_end (or1ksim *sim, void *dat)
 {
   struct vga_state *vga = dat;
   struct mem_ops ops;
@@ -433,8 +434,8 @@ vga_sec_end (void *dat)
   /* FIXME: Correct delay? */
   ops.delayr = 2;
   ops.delayw = 2;
-  reg_mem_area (vga->baseaddr, VGA_ADDR_SPACE, 0, &ops);
-  reg_sim_reset (vga_reset, dat);
+  reg_mem_area (sim, vga->baseaddr, VGA_ADDR_SPACE, 0, &ops);
+  reg_sim_reset (sim, vga_reset, dat);
 }
 
 
@@ -445,10 +446,10 @@ vga_sec_end (void *dat)
    file parameter supported.                                                 */
 /*---------------------------------------------------------------------------*/
 void
-reg_vga_sec ()
+reg_vga_sec (or1ksim *sim)
 {
   struct config_section *sec =
-    reg_config_sec ("vga", vga_sec_start, vga_sec_end);
+    reg_config_sec (sim, "vga", vga_sec_start, vga_sec_end);
 
   reg_config_param (sec, "baseaddr", paramt_addr, vga_baseaddr);
   reg_config_param (sec, "enabled", paramt_int, vga_enabled);

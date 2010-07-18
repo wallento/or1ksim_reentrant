@@ -2,6 +2,7 @@
 
    Copyright (C) 1999 Damjan Lampret, lampret@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -42,14 +43,11 @@
 #include "sim-config.h"
 #include "arch.h"
 #include "stats.h"
+#include "siminstance.h"
+
+#include "branch-predict.h" // include to verify declarations
 
 /* Branch prediction buffer */
-
-/* Length of BPB */
-#define BPB_LEN 64
-
-/* Number of BPB ways (1, 2, 3 etc.). */
-#define BPB_WAYS 1
 
 /* Number of prediction states (2, 4, 8 etc.). */
 #define BPB_PSTATES 2
@@ -57,23 +55,10 @@
 /* Number of usage states (2, 3, 4 etc.). */
 #define BPB_USTATES 2
 
-/* branch prediction buffer entry */
-struct bpb_entry
-{
-  struct
-  {
-    oraddr_t addr;		/* address of a branch insn */
-    int taken;			/* taken == 1, not taken == 0  OR */
-    /* strongly taken == 3, taken == 2, 
-       not taken == 1, strongly not taken == 0 */
-    int lru;			/* least recently == 0 */
-  } way[BPB_WAYS];
-} bpb[BPB_LEN];
-
 void
-bpb_info ()
+bpb_info (or1ksim *sim)
 {
-  if (!config.bpb.enabled)
+  if (!sim->config.bpb.enabled)
     {
       PRINTF ("BPB not simulated. Check -bpb option.\n");
       return;
@@ -101,13 +86,13 @@ bpb_info ()
 */
 
 void
-bpb_update (oraddr_t addr, int taken)
+bpb_update (or1ksim *sim,oraddr_t addr, int taken)
 {
   int entry, way = -1;
   int i;
 
   /* BPB simulation enabled/disabled. */
-  if (!config.bpb.enabled)
+  if (!sim->config.bpb.enabled)
     return;
 
   /* Calc entry. */
@@ -115,56 +100,48 @@ bpb_update (oraddr_t addr, int taken)
 
   /* Scan all ways and try to find our addr. */
   for (i = 0; i < BPB_WAYS; i++)
-    if (bpb[entry].way[i].addr == addr)
+    if (sim->bpb[entry].way[i].addr == addr)
       way = i;
 
   /* Did we find our cached branch? */
   if (way >= 0)
     {				/* Yes, we did. */
-      or1k_mstats.bpb.hit++;
+      sim->or1k_mstats.bpb.hit++;
 
       for (i = 0; i < BPB_WAYS; i++)
-	if (bpb[entry].way[i].lru)
-	  bpb[entry].way[i].lru--;
-      bpb[entry].way[way].lru = BPB_USTATES - 1;
+	if (sim->bpb[entry].way[i].lru)
+	  sim->bpb[entry].way[i].lru--;
+      sim->bpb[entry].way[way].lru = BPB_USTATES - 1;
 
-      if (bpb[entry].way[way].taken / (BPB_PSTATES / 2) == taken)
-	or1k_mstats.bpb.correct++;
+      if (sim->bpb[entry].way[way].taken / (BPB_PSTATES / 2) == taken)
+	sim->or1k_mstats.bpb.correct++;
       else
-	or1k_mstats.bpb.incorrect++;
+	sim->or1k_mstats.bpb.incorrect++;
 
-      if (taken && (bpb[entry].way[way].taken < BPB_PSTATES - 1))
-	bpb[entry].way[way].taken++;
-      else if (!taken && (bpb[entry].way[way].taken))
-	bpb[entry].way[way].taken--;
+      if (taken && (sim->bpb[entry].way[way].taken < BPB_PSTATES - 1))
+	sim->bpb[entry].way[way].taken++;
+      else if (!taken && (sim->bpb[entry].way[way].taken))
+	sim->bpb[entry].way[way].taken--;
     }
   else
     {				/* No, we didn't. */
       int minlru = BPB_USTATES - 1;
       int minway = 0;
 
-      or1k_mstats.bpb.miss++;
+      sim->or1k_mstats.bpb.miss++;
 
       for (i = 0; i < BPB_WAYS; i++)
-	if (bpb[entry].way[i].lru < minlru)
+	if (sim->bpb[entry].way[i].lru < minlru)
 	  minway = i;
 
-      bpb[entry].way[minway].addr = addr;
-      bpb[entry].way[minway].taken = (BPB_PSTATES / 2 - 1) + taken;
+      sim->bpb[entry].way[minway].addr = addr;
+      sim->bpb[entry].way[minway].taken = (BPB_PSTATES / 2 - 1) + taken;
       for (i = 0; i < BPB_WAYS; i++)
-	if (bpb[entry].way[i].lru)
-	  bpb[entry].way[i].lru--;
-      bpb[entry].way[minway].lru = BPB_USTATES - 1;
+	if (sim->bpb[entry].way[i].lru)
+	  sim->bpb[entry].way[i].lru--;
+      sim->bpb[entry].way[minway].lru = BPB_USTATES - 1;
     }
 }
-
-/* Branch target instruction cache */
-
-/* Length of BTIC */
-#define BTIC_LEN 128
-
-/* Number of BTIC ways (1, 2, 3 etc.). */
-#define BTIC_WAYS 2
 
 /* Number of usage states (2, 3, 4 etc.). */
 #define BTIC_USTATES 2
@@ -172,20 +149,10 @@ bpb_update (oraddr_t addr, int taken)
 /* Target block size in bytes. */
 #define BTIC_BLOCKSIZE 4
 
-struct btic_entry
-{
-  struct
-  {
-    oraddr_t addr;		/* cached target address of a branch */
-    int lru;			/* least recently used */
-    char *insn;			/* cached insn at target address (not used currently) */
-  } way[BTIC_WAYS];
-} btic[BTIC_LEN];
-
 void
-btic_info ()
+btic_info (or1ksim *sim)
 {
-  if (!config.bpb.btic)
+  if (!sim->config.bpb.btic)
     {
       PRINTF ("BTIC not simulated. Check --btic option.\n");
       return;
@@ -210,13 +177,13 @@ btic_info ()
 */
 
 void
-btic_update (oraddr_t targetaddr)
+btic_update (or1ksim *sim,oraddr_t targetaddr)
 {
   int entry, way = -1;
   int i;
 
   /* BTIC simulation enabled/disabled. */
-  if (!config.bpb.btic)
+  if (!sim->config.bpb.btic)
     return;
 
   /* Calc entry. */
@@ -224,80 +191,80 @@ btic_update (oraddr_t targetaddr)
 
   /* Scan all ways and try to find our addr. */
   for (i = 0; i < BTIC_WAYS; i++)
-    if (btic[entry].way[i].addr == targetaddr)
+    if (sim->btic[entry].way[i].addr == targetaddr)
       way = i;
 
   /* Did we find our cached branch? */
   if (way >= 0)
     {				/* Yes, we did. */
-      or1k_mstats.btic.hit++;
+      sim->or1k_mstats.btic.hit++;
 
       for (i = 0; i < BTIC_WAYS; i++)
-	if (btic[entry].way[i].lru)
-	  btic[entry].way[i].lru--;
-      btic[entry].way[way].lru = BTIC_USTATES - 1;
+	if (sim->btic[entry].way[i].lru)
+		sim->btic[entry].way[i].lru--;
+      sim->btic[entry].way[way].lru = BTIC_USTATES - 1;
     }
   else
     {				/* No, we didn't. */
       int minlru = BTIC_USTATES - 1;
       int minway = 0;
 
-      or1k_mstats.btic.miss++;
+      sim->or1k_mstats.btic.miss++;
 
       for (i = 0; i < BTIC_WAYS; i++)
-	if (btic[entry].way[i].lru < minlru)
+	if (sim->btic[entry].way[i].lru < minlru)
 	  minway = i;
 
-      btic[entry].way[minway].addr = targetaddr;
-      btic[entry].way[minway].insn = NULL;
+      sim->btic[entry].way[minway].addr = targetaddr;
+      sim->btic[entry].way[minway].insn = NULL;
       for (i = 0; i < BTIC_WAYS; i++)
-	if (btic[entry].way[i].lru)
-	  btic[entry].way[i].lru--;
-      btic[entry].way[minway].lru = BTIC_USTATES - 1;
+	if (sim->btic[entry].way[i].lru)
+		sim->btic[entry].way[i].lru--;
+      sim->btic[entry].way[minway].lru = BTIC_USTATES - 1;
     }
 }
 
 /*----------------------------------------------------[ BPB configuration ]---*/
 static void
-bpb_enabled (union param_val val, void *dat)
+bpb_enabled (or1ksim *sim,union param_val val, void *dat)
 {
-  config.bpb.enabled = val.int_val;
+  sim->config.bpb.enabled = val.int_val;
 }
 
 static void
-bpb_btic (union param_val val, void *dat)
+bpb_btic (or1ksim *sim,union param_val val, void *dat)
 {
-  config.bpb.btic = val.int_val;
+  sim->config.bpb.btic = val.int_val;
 }
 
 static void
-bpb_sbp_bnf_fwd (union param_val val, void *dat)
+bpb_sbp_bnf_fwd (or1ksim *sim,union param_val val, void *dat)
 {
-  config.bpb.sbp_bnf_fwd = val.int_val;
+  sim->config.bpb.sbp_bnf_fwd = val.int_val;
 }
 
 static void
-bpb_sbp_bf_fwd (union param_val val, void *dat)
+bpb_sbp_bf_fwd (or1ksim *sim,union param_val val, void *dat)
 {
-  config.bpb.sbp_bf_fwd = val.int_val;
+  sim->config.bpb.sbp_bf_fwd = val.int_val;
 }
 
 static void
-bpb_missdelay (union param_val val, void *dat)
+bpb_missdelay (or1ksim *sim,union param_val val, void *dat)
 {
-  config.bpb.missdelay = val.int_val;
+  sim->config.bpb.missdelay = val.int_val;
 }
 
 static void
-bpb_hitdelay (union param_val val, void *dat)
+bpb_hitdelay (or1ksim *sim,union param_val val, void *dat)
 {
-  config.bpb.hitdelay = val.int_val;
+  sim->config.bpb.hitdelay = val.int_val;
 }
 
 void
-reg_bpb_sec ()
+reg_bpb_sec (or1ksim* sim)
 {
-  struct config_section *sec = reg_config_sec ("bpb", NULL, NULL);
+  struct config_section *sec = reg_config_sec (sim,"bpb", NULL, NULL);
 
   reg_config_param (sec, "enabled", paramt_int, bpb_enabled);
   reg_config_param (sec, "btic", paramt_int, bpb_btic);

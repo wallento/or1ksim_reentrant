@@ -2,6 +2,7 @@
 
    Copyright (C) 2001 Erez Volk, erez@mailandnews.comopencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -28,6 +29,6 @@
 #define ETH__H
 
 /* Prototypes for external use */
-extern void  reg_ethernet_sec ();
+extern void  reg_ethernet_sec (or1ksim *sim);
 
 #endif /* ETH__H */

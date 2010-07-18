@@ -2,6 +2,7 @@
 
    Copyright (C) 1999 Damjan Lampret, lampret@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -46,12 +47,10 @@
 #include "sim-cmd.h"
 
 
-struct dmmu *dmmu_state;
-
 /* Data MMU */
 
 static uorreg_t *
-dmmu_find_tlbmr (oraddr_t virtaddr, uorreg_t ** dtlbmr_lru, struct dmmu *dmmu)
+dmmu_find_tlbmr (or1ksim *sim, oraddr_t virtaddr, uorreg_t ** dtlbmr_lru, struct dmmu *dmmu)
 {
   int set;
   int i;
@@ -63,7 +62,7 @@ dmmu_find_tlbmr (oraddr_t virtaddr, uorreg_t ** dtlbmr_lru, struct dmmu *dmmu)
   set &= dmmu->set_mask;
   vpn = virtaddr & dmmu->vpn_mask;
 
-  dtlbmr = &cpu_state.sprs[SPR_DTLBMR_BASE (0) + set];
+  dtlbmr = &sim->cpu_state.sprs[SPR_DTLBMR_BASE (0) + set];
   *dtlbmr_lru = dtlbmr;
 
   /* FIXME: Should this be reversed? */
@@ -77,27 +76,27 @@ dmmu_find_tlbmr (oraddr_t virtaddr, uorreg_t ** dtlbmr_lru, struct dmmu *dmmu)
 }
 
 oraddr_t
-dmmu_translate (oraddr_t virtaddr, int write_access)
+dmmu_translate (or1ksim *sim,oraddr_t virtaddr, int write_access)
 {
   int i;
   uorreg_t *dtlbmr;
   uorreg_t *dtlbtr;
   uorreg_t *dtlbmr_lru;
-  struct dmmu *dmmu = dmmu_state;
+  struct dmmu *dmmu = sim->dmmu_state;
 
-  if (!(cpu_state.sprs[SPR_SR] & SPR_SR_DME) ||
-      !(cpu_state.sprs[SPR_UPR] & SPR_UPR_DMP))
+  if (!(sim->cpu_state.sprs[SPR_SR] & SPR_SR_DME) ||
+      !(sim->cpu_state.sprs[SPR_UPR] & SPR_UPR_DMP))
     {
-      data_ci = (virtaddr >= 0x80000000);
+      sim->data_ci = (virtaddr >= 0x80000000);
       return virtaddr;
     }
 
-  dtlbmr = dmmu_find_tlbmr (virtaddr, &dtlbmr_lru, dmmu);
+  dtlbmr = dmmu_find_tlbmr (sim, virtaddr, &dtlbmr_lru, dmmu);
 
   /* Did we find our tlb entry? */
   if (dtlbmr)
     {				/* Yes, we did. */
-      dmmu_stats.loads_tlbhit++;
+      sim->dmmu_stats.loads_tlbhit++;
 
       dtlbtr = dtlbmr + 128;
 
@@ -116,22 +115,22 @@ dmmu_translate (oraddr_t virtaddr, int write_access)
       *dtlbmr |= dmmu->lru_reload;
 
       /* Check if page is cache inhibited */
-      data_ci = *dtlbtr & SPR_DTLBTR_CI;
+      sim->data_ci = *dtlbtr & SPR_DTLBTR_CI;
 
-      runtime.sim.mem_cycles += dmmu->hitdelay;
+      sim->runtime.sim.mem_cycles += dmmu->hitdelay;
 
       /* Test for page fault */
-      if (cpu_state.sprs[SPR_SR] & SPR_SR_SM)
+      if (sim->cpu_state.sprs[SPR_SR] & SPR_SR_SM)
 	{
 	  if ((write_access && !(*dtlbtr & SPR_DTLBTR_SWE))
 	      || (!write_access && !(*dtlbtr & SPR_DTLBTR_SRE)))
-	    except_handle (EXCEPT_DPF, virtaddr);
+	    except_handle (sim, EXCEPT_DPF, virtaddr);
 	}
       else
 	{
 	  if ((write_access && !(*dtlbtr & SPR_DTLBTR_UWE))
 	      || (!write_access && !(*dtlbtr & SPR_DTLBTR_URE)))
-	    except_handle (EXCEPT_DPF, virtaddr);
+	    except_handle (sim, EXCEPT_DPF, virtaddr);
 	}
 
       return (*dtlbtr & SPR_DTLBTR_PPN) | (virtaddr &
@@ -139,46 +138,46 @@ dmmu_translate (oraddr_t virtaddr, int write_access)
     }
 
   /* No, we didn't. */
-  dmmu_stats.loads_tlbmiss++;
+  sim->dmmu_stats.loads_tlbmiss++;
 #if 0
   for (i = 0; i < dmmu->nways; i++)
-    if (((cpu_state.sprs[SPR_DTLBMR_BASE (i) + set] & SPR_DTLBMR_LRU) >> 6) <
+    if (((sim->cpu_state.sprs[SPR_DTLBMR_BASE (i) + set] & SPR_DTLBMR_LRU) >> 6) <
 	minlru)
       minway = i;
 
-  cpu_state.sprs[SPR_DTLBMR_BASE (minway) + set] &= ~SPR_DTLBMR_VPN;
-  cpu_state.sprs[SPR_DTLBMR_BASE (minway) + set] |= vpn << 12;
+  sim->cpu_state.sprs[SPR_DTLBMR_BASE (minway) + set] &= ~SPR_DTLBMR_VPN;
+  sim->cpu_state.sprs[SPR_DTLBMR_BASE (minway) + set] |= vpn << 12;
   for (i = 0; i < dmmu->nways; i++)
     {
-      uorreg_t lru = cpu_state.sprs[SPR_DTLBMR_BASE (i) + set];
+      uorreg_t lru = sim->cpu_state.sprs[SPR_DTLBMR_BASE (i) + set];
       if (lru & SPR_DTLBMR_LRU)
 	{
 	  lru = (lru & ~SPR_DTLBMR_LRU) | ((lru & SPR_DTLBMR_LRU) - 0x40);
-	  cpu_state.sprs[SPR_DTLBMR_BASE (i) + set] = lru;
+	  sim->cpu_state.sprs[SPR_DTLBMR_BASE (i) + set] = lru;
 	}
     }
-  cpu_state.sprs[SPR_DTLBMR_BASE (way) + set] &= ~SPR_DTLBMR_LRU;
-  cpu_state.sprs[SPR_DTLBMR_BASE (way) + set] |= (dmmu->nsets - 1) << 6;
+  sim->cpu_state.sprs[SPR_DTLBMR_BASE (way) + set] &= ~SPR_DTLBMR_LRU;
+  sim->cpu_state.sprs[SPR_DTLBMR_BASE (way) + set] |= (dmmu->nsets - 1) << 6;
 
   /* 1 to 1 mapping */
-  cpu_state.sprs[SPR_DTLBTR_BASE (minway) + set] &= ~SPR_DTLBTR_PPN;
-  cpu_state.sprs[SPR_DTLBTR_BASE (minway) + set] |= vpn << 12;
+  sim->cpu_state.sprs[SPR_DTLBTR_BASE (minway) + set] &= ~SPR_DTLBTR_PPN;
+  sim->cpu_state.sprs[SPR_DTLBTR_BASE (minway) + set] |= vpn << 12;
 
-  cpu_state.sprs[SPR_DTLBMR_BASE (minway) + set] |= SPR_DTLBMR_V;
+  sim->cpu_state.sprs[SPR_DTLBMR_BASE (minway) + set] |= SPR_DTLBMR_V;
 #endif
-  runtime.sim.mem_cycles += dmmu->missdelay;
+  sim->runtime.sim.mem_cycles += dmmu->missdelay;
   /* if tlb refill implemented in HW */
-  /* return ((cpu_state.sprs[SPR_DTLBTR_BASE(minway) + set] & SPR_DTLBTR_PPN) >> 12) * dmmu->pagesize + (virtaddr % dmmu->pagesize); */
+  /* return ((sim->cpu_state.sprs[SPR_DTLBTR_BASE(minway) + set] & SPR_DTLBTR_PPN) >> 12) * dmmu->pagesize + (virtaddr % dmmu->pagesize); */
 
-  except_handle (EXCEPT_DTLBMISS, virtaddr);
+  except_handle (sim, EXCEPT_DTLBMISS, virtaddr);
   return 0;
 }
 
-/* DESC: try to find EA -> PA transaltion without changing 
- *       any of precessor states. if this is not passible gives up 
+/* DESC: try to find EA -> PA transaltion without changing
+ *       any of precessor states. if this is not passible gives up
  *       (without triggering exceptions)
  *
- * PRMS: virtaddr     - EA for which to find translation 
+ * PRMS: virtaddr     - EA for which to find translation
  *
  *       write_access - 0 ignore testing for write access
  *                      1 test for write access, if fails
@@ -188,36 +187,36 @@ dmmu_translate (oraddr_t virtaddr, int write_access)
  *                      0 ignore data cache
  *
  * RTRN: 0            - no DMMU, DMMU disabled or ITLB miss
- *       else         - appropriate PA (note it DMMU is not present 
+ *       else         - appropriate PA (note it DMMU is not present
  *                      PA === EA)
  */
 oraddr_t
-peek_into_dtlb (oraddr_t virtaddr, int write_access, int through_dc)
+peek_into_dtlb (or1ksim *sim, oraddr_t virtaddr, int write_access, int through_dc)
 {
   uorreg_t *dtlbmr;
   uorreg_t *dtlbtr;
   uorreg_t *dtlbmr_lru;
-  struct dmmu *dmmu = dmmu_state;
+  struct dmmu *dmmu = sim->dmmu_state;
 
-  if (!(cpu_state.sprs[SPR_SR] & SPR_SR_DME) ||
-      !(cpu_state.sprs[SPR_UPR] & SPR_UPR_DMP))
+  if (!(sim->cpu_state.sprs[SPR_SR] & SPR_SR_DME) ||
+      !(sim->cpu_state.sprs[SPR_UPR] & SPR_UPR_DMP))
     {
       if (through_dc)
-	data_ci = (virtaddr >= 0x80000000);
+	sim->data_ci = (virtaddr >= 0x80000000);
       return virtaddr;
     }
 
-  dtlbmr = dmmu_find_tlbmr (virtaddr, &dtlbmr_lru, dmmu);
+  dtlbmr = dmmu_find_tlbmr (sim, virtaddr, &dtlbmr_lru, dmmu);
 
   /* Did we find our tlb entry? */
   if (dtlbmr)
     {				/* Yes, we did. */
-      dmmu_stats.loads_tlbhit++;
+      sim->dmmu_stats.loads_tlbhit++;
 
       dtlbtr = dtlbmr + 128;
 
       /* Test for page fault */
-      if (cpu_state.sprs[SPR_SR] & SPR_SR_SM)
+      if (sim->cpu_state.sprs[SPR_SR] & SPR_SR_SM)
 	{
 	  if ((write_access && !(*dtlbtr & SPR_DTLBTR_SWE)) ||
 	      (!write_access && !(*dtlbtr & SPR_DTLBTR_SRE)))
@@ -237,7 +236,7 @@ peek_into_dtlb (oraddr_t virtaddr, int write_access, int through_dc)
       if (through_dc)
 	{
 	  /* Check if page is cache inhibited */
-	  data_ci = *dtlbtr & SPR_DTLBTR_CI;
+	  sim->data_ci = *dtlbtr & SPR_DTLBTR_CI;
 	}
 
       return (*dtlbtr & SPR_DTLBTR_PPN) | (virtaddr &
@@ -262,14 +261,14 @@ peek_into_dtlb (oraddr_t virtaddr, int write_access, int through_dc)
 */
 
 static void
-dtlb_status (void *dat)
+dtlb_status (or1ksim *sim, void *dat)
 {
   struct dmmu *dmmu = dat;
   int set;
   int way;
   int end_set = dmmu->nsets;
 
-  if (!(cpu_state.sprs[SPR_UPR] & SPR_UPR_DMP))
+  if (!(sim->cpu_state.sprs[SPR_UPR] & SPR_UPR_DMP))
     {
       PRINTF ("DMMU not implemented. Set UPR[DMP].\n");
       return;
@@ -283,11 +282,11 @@ dtlb_status (void *dat)
       for (way = 0; way < dmmu->nways; way++)
 	{
 	  PRINTF ("%s\n", dump_spr (SPR_DTLBMR_BASE (way) + set,
-				    cpu_state.sprs[SPR_DTLBMR_BASE (way) +
+				    sim->cpu_state.sprs[SPR_DTLBMR_BASE (way) +
 						   set]));
 	  PRINTF ("%s\n",
 		  dump_spr (SPR_DTLBTR_BASE (way) + set,
-			    cpu_state.sprs[SPR_DTLBTR_BASE (way) + set]));
+			    sim->cpu_state.sprs[SPR_DTLBTR_BASE (way) + set]));
 	}
     }
   if (0 < end_set)
@@ -305,17 +304,17 @@ dtlb_status (void *dat)
    @param[in] dat  The config data structure                                 */
 /*---------------------------------------------------------------------------*/
 static void
-dmmu_enabled (union param_val val, void *dat)
+dmmu_enabled (or1ksim *sim,union param_val val, void *dat)
 {
   struct dmmu *dmmu = dat;
 
   if (val.int_val)
     {
-      cpu_state.sprs[SPR_UPR] |= SPR_UPR_DMP;
+      sim->cpu_state.sprs[SPR_UPR] |= SPR_UPR_DMP;
     }
   else
     {
-      cpu_state.sprs[SPR_UPR] &= ~SPR_UPR_DMP;
+      sim->cpu_state.sprs[SPR_UPR] &= ~SPR_UPR_DMP;
     }
 
   dmmu->enabled = val.int_val;
@@ -333,7 +332,7 @@ dmmu_enabled (union param_val val, void *dat)
    @param[in] dat  The config data structure                                 */
 /*---------------------------------------------------------------------------*/
 static void
-dmmu_nsets (union param_val  val,
+dmmu_nsets (or1ksim *sim,union param_val  val,
 	    void            *dat)
 {
   struct dmmu *dmmu = dat;
@@ -344,8 +343,8 @@ dmmu_nsets (union param_val  val,
 
       dmmu->nsets = val.int_val;
 
-      cpu_state.sprs[SPR_DMMUCFGR] &= ~SPR_DMMUCFGR_NTS;
-      cpu_state.sprs[SPR_DMMUCFGR] |= set_bits << SPR_DMMUCFGR_NTS_OFF;
+      sim->cpu_state.sprs[SPR_DMMUCFGR] &= ~SPR_DMMUCFGR_NTS;
+      sim->cpu_state.sprs[SPR_DMMUCFGR] |= set_bits << SPR_DMMUCFGR_NTS_OFF;
     }
   else
     {
@@ -364,7 +363,7 @@ dmmu_nsets (union param_val  val,
    @param[in] dat  The config data structure                                 */
 /*---------------------------------------------------------------------------*/
 static void
-dmmu_nways (union param_val  val,
+dmmu_nways (or1ksim *sim,union param_val  val,
 	    void            *dat)
 {
   struct dmmu *dmmu = dat;
@@ -375,8 +374,8 @@ dmmu_nways (union param_val  val,
 
       dmmu->nways = val.int_val;
 
-      cpu_state.sprs[SPR_DMMUCFGR] &= ~SPR_DMMUCFGR_NTW;
-      cpu_state.sprs[SPR_DMMUCFGR] |= way_bits << SPR_DMMUCFGR_NTW_OFF;
+      sim->cpu_state.sprs[SPR_DMMUCFGR] &= ~SPR_DMMUCFGR_NTW;
+      sim->cpu_state.sprs[SPR_DMMUCFGR] |= way_bits << SPR_DMMUCFGR_NTW_OFF;
     }
   else
     {
@@ -394,7 +393,7 @@ dmmu_nways (union param_val  val,
    @param[in] dat  The config data structure                                 */
 /*---------------------------------------------------------------------------*/
 static void
-dmmu_pagesize (union param_val  val,
+dmmu_pagesize (or1ksim *sim,union param_val  val,
 	       void            *dat)
 {
   struct dmmu *dmmu = dat;
@@ -419,7 +418,7 @@ dmmu_pagesize (union param_val  val,
    @param[in] dat  The config data structure                                 */
 /*---------------------------------------------------------------------------*/
 static void
-dmmu_entrysize (union param_val  val,
+dmmu_entrysize (or1ksim *sim,union param_val  val,
 		void            *dat)
 {
   struct dmmu *dmmu = dat;
@@ -444,7 +443,7 @@ dmmu_entrysize (union param_val  val,
    @param[in] dat  The config data structure                                 */
 /*---------------------------------------------------------------------------*/
 static void
-dmmu_ustates (union param_val  val,
+dmmu_ustates (or1ksim *sim,union param_val  val,
 	      void            *dat)
 {
   struct dmmu *dmmu = dat;
@@ -462,7 +461,7 @@ dmmu_ustates (union param_val  val,
 
 
 static void
-dmmu_missdelay (union param_val val, void *dat)
+dmmu_missdelay (or1ksim *sim,union param_val val, void *dat)
 {
   struct dmmu *dmmu = dat;
 
@@ -470,7 +469,7 @@ dmmu_missdelay (union param_val val, void *dat)
 }
 
 static void
-dmmu_hitdelay (union param_val val, void *dat)
+dmmu_hitdelay (or1ksim *sim,union param_val val, void *dat)
 {
   struct dmmu *dmmu = dat;
 
@@ -486,7 +485,7 @@ dmmu_hitdelay (union param_val val, void *dat)
    @return  The new memory configuration data structure                      */
 /*---------------------------------------------------------------------------*/
 static void *
-dmmu_start_sec ()
+dmmu_start_sec (or1ksim *sim)
 {
   struct dmmu *dmmu;
   int          set_bits;
@@ -509,29 +508,29 @@ dmmu_start_sec ()
 
   if (dmmu->enabled)
     {
-      cpu_state.sprs[SPR_UPR] |= SPR_UPR_DMP;
+      sim->cpu_state.sprs[SPR_UPR] |= SPR_UPR_DMP;
     }
   else
     {
-      cpu_state.sprs[SPR_UPR] &= ~SPR_UPR_DMP;
+      sim->cpu_state.sprs[SPR_UPR] &= ~SPR_UPR_DMP;
     }
 
   set_bits = log2_int (dmmu->nsets);
-  cpu_state.sprs[SPR_DMMUCFGR] &= ~SPR_DMMUCFGR_NTS;
-  cpu_state.sprs[SPR_DMMUCFGR] |= set_bits << SPR_DMMUCFGR_NTS_OFF;
+  sim->cpu_state.sprs[SPR_DMMUCFGR] &= ~SPR_DMMUCFGR_NTS;
+  sim->cpu_state.sprs[SPR_DMMUCFGR] |= set_bits << SPR_DMMUCFGR_NTS_OFF;
 
   way_bits = dmmu->nways - 1;
-  cpu_state.sprs[SPR_DMMUCFGR] &= ~SPR_DMMUCFGR_NTW;
-  cpu_state.sprs[SPR_DMMUCFGR] |= way_bits << SPR_DMMUCFGR_NTW_OFF;
+  sim->cpu_state.sprs[SPR_DMMUCFGR] &= ~SPR_DMMUCFGR_NTW;
+  sim->cpu_state.sprs[SPR_DMMUCFGR] |= way_bits << SPR_DMMUCFGR_NTW_OFF;
 
-  dmmu_state = dmmu;
+  sim->dmmu_state = dmmu;
   return dmmu;
 
 }	/* dmmu_start_sec() */
 
 
 static void
-dmmu_end_sec (void *dat)
+dmmu_end_sec (or1ksim *sim,void *dat)
 {
   struct dmmu *dmmu = dat;
 
@@ -548,14 +547,14 @@ dmmu_end_sec (void *dat)
       PRINTF ("Data MMU %dKB: %d ways, %d sets, entry size %d bytes\n",
 	      dmmu->nsets * dmmu->entrysize * dmmu->nways / 1024, dmmu->nways,
 	      dmmu->nsets, dmmu->entrysize);
-      reg_sim_stat (dtlb_status, dmmu);
+      reg_sim_stat (sim, dtlb_status, dmmu);
     }
 }
 
 void
-reg_dmmu_sec (void)
+reg_dmmu_sec (or1ksim* sim)
 {
-  struct config_section *sec = reg_config_sec ("dmmu", dmmu_start_sec,
+  struct config_section *sec = reg_config_sec (sim, "dmmu", dmmu_start_sec,
 					       dmmu_end_sec);
 
   reg_config_param (sec, "enabled", paramt_int, dmmu_enabled);

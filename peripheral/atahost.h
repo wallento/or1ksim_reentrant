@@ -2,6 +2,7 @@
 
    Copyright (C) 2002 Richard Herveille, rherveille@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -31,6 +32,7 @@
 
 #include "arch.h"
 #include "atadevice.h"
+#include "siminstance.h"
 
 /* --- Register definitions --- */
 
@@ -170,7 +172,7 @@ struct ata_host
 /* ----------------------------                                       */
 /* ----- Prototypes       -----                                       */
 /* ----------------------------                                       */
-void ata_int (void *dat);
+void ata_int (or1ksim *sim,void *dat);
 
 
 /* ----------------------------                                       */
@@ -183,6 +185,6 @@ void ata_int (void *dat);
 #define ata_dma_delay(dmareg) ( (((dmareg >> ATA_TD) & 0xff) +1) + (((pioreg >> ATA_TM) & 0xff) +1) +1 )
 
 /* Prototypes for external use */
-void reg_ata_sec ();
+void reg_ata_sec (or1ksim *sim);
 
 #endif /* ATAHOST__H */

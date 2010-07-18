@@ -2,6 +2,7 @@
 
    Copyright (C) 2001, Marko Mlinar, markom@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
   
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
   
@@ -43,56 +44,35 @@
 /* Package includes */
 #include "sim-config.h"
 #include "vapi.h"
+#include "siminstance.h"
 
-
-static unsigned int serverIP = 0;
-
-static unsigned int server_fd = 0;
-static unsigned int nhandlers = 0;
-
-static int tcp_level = 0;
-
-static struct vapi_handler
-{
-  int fd;
-  unsigned long base_id, num_ids;
-  void (*read_func) (unsigned long, unsigned long, void *);
-  void *priv_dat;
-  struct vapi_handler *next;
-  int temp;
-} *vapi_handler = NULL;
-
-/* Structure for polling, it is cached, that it doesn't have to be rebuilt each time */
-static struct pollfd *fds = NULL;
-static int nfds = 0;
-
-/* Rebuilds the fds structures; see fds.  */
+/* Rebuilds the sim->vapi.fds structures; see sim->vapi.fds.  */
 void
-rebuild_fds ()
+rebuild_fds (or1ksim *sim)
 {
   struct vapi_handler *t;
-  if (fds)
-    free (fds);
-  fds = (struct pollfd *) malloc (sizeof (struct pollfd) * (nhandlers + 1));
-  if (!fds)
+  if (sim->vapi.fds)
+    free (sim->vapi.fds);
+  sim->vapi.fds = (struct pollfd *) malloc (sizeof (struct pollfd) * (sim->vapi.nhandlers + 1));
+  if (!sim->vapi.fds)
     {
       fprintf (stderr, "FATAL: Out of memory.\n");
       exit (1);
     }
 
-  nfds = 0;
-  fds[nfds].fd = server_fd;
-  fds[nfds].events = POLLIN;
-  fds[nfds++].revents = 0;
+  sim->vapi.nfds = 0;
+  sim->vapi.fds[sim->vapi.nfds].fd = sim->vapi.server_fd;
+  sim->vapi.fds[sim->vapi.nfds].events = POLLIN;
+  sim->vapi.fds[sim->vapi.nfds++].revents = 0;
 
-  for (t = vapi_handler; t; t = t->next)
+  for (t = sim->vapi.vapi_handler; t; t = t->next)
     {
       if (t->fd)
 	{
-	  t->temp = nfds;
-	  fds[nfds].fd = t->fd;
-	  fds[nfds].events = POLLIN;
-	  fds[nfds++].revents = 0;
+	  t->temp = sim->vapi.nfds;
+	  sim->vapi.fds[sim->vapi.nfds].fd = t->fd;
+	  sim->vapi.fds[sim->vapi.nfds].events = POLLIN;
+	  sim->vapi.fds[sim->vapi.nfds++].revents = 0;
 	}
       else
 	t->temp = -1;
@@ -108,9 +88,9 @@ handler_fits_id (const struct vapi_handler *t, unsigned long id)
 
 /* Finds a handler with given ID, return it, NULL if not found.  */
 static struct vapi_handler *
-find_handler (unsigned long id)
+find_handler (or1ksim *sim, unsigned long id)
 {
-  struct vapi_handler *t = vapi_handler;
+  struct vapi_handler *t = sim->vapi.vapi_handler;
   while (t && !handler_fits_id (t, id))
     t = t->next;
   return t;
@@ -118,9 +98,9 @@ find_handler (unsigned long id)
 
 /* Adds a handler with given id and returns it.  */
 static struct vapi_handler *
-add_handler (unsigned long base_id, unsigned long num_ids)
+add_handler (or1ksim *sim, unsigned long base_id, unsigned long num_ids)
 {
-  struct vapi_handler **t = &vapi_handler;
+  struct vapi_handler **t = &sim->vapi.vapi_handler;
   struct vapi_handler *tt;
   while ((*t))
     t = &(*t)->next;
@@ -132,22 +112,22 @@ add_handler (unsigned long base_id, unsigned long num_ids)
   tt->priv_dat = NULL;
   tt->fd = 0;
   (*t) = tt;
-  free (fds);
-  fds = NULL;
-  nhandlers++;
-  rebuild_fds ();
+  free (sim->vapi.fds);
+  sim->vapi.fds = NULL;
+  sim->vapi.nhandlers++;
+  rebuild_fds (sim);
   return tt;
 }
 
 void
-vapi_write_log_file (VAPI_COMMAND command, unsigned long devid,
+vapi_write_log_file (or1ksim *sim, VAPI_COMMAND command, unsigned long devid,
 		     unsigned long data)
 {
-  if (!runtime.vapi.vapi_file)
+  if (!sim->runtime.vapi.vapi_file)
     return;
-  if (!config.vapi.hide_device_id && devid <= VAPI_MAX_DEVID)
-    fprintf (runtime.vapi.vapi_file, "%04lx", devid);
-  fprintf (runtime.vapi.vapi_file, "%1x%08lx\n", command, data);
+  if (!sim->config.vapi.hide_device_id && devid <= VAPI_MAX_DEVID)
+    fprintf (sim->runtime.vapi.vapi_file, "%04lx", devid);
+  fprintf (sim->runtime.vapi.vapi_file, "%1x%08lx\n", command, data);
 }
 
 static int
@@ -236,7 +216,7 @@ vapi_read_stream (int fd, void *buf, int len)
 
 /* Added by CZ 24/05/01 */
 int
-get_server_socket (const char *name, const char *proto, int port)
+get_server_socket (or1ksim *sim, const char *name, const char *proto, int port)
 {
   struct servent *service;
   struct protoent *protocol;
@@ -255,7 +235,7 @@ get_server_socket (const char *name, const char *proto, int port)
       perror (sTemp);
       return 0;
     }
-  tcp_level = protocol->p_proto;	/* Save for later */
+  sim->vapi.tcp_level = protocol->p_proto;	/* Save for later */
 
   /* If we weren't passed a non standard port, get the port
      from the services directory. */
@@ -322,7 +302,7 @@ get_server_socket (const char *name, const char *proto, int port)
       close (sockfd);
       return 0;
     }
-  serverIP = sa.sin_addr.s_addr;
+  sim->vapi.serverIP = sa.sin_addr.s_addr;
   len = sizeof (struct sockaddr_in);
   if (getsockname (sockfd, (struct sockaddr *) &sa, &len) < 0)
     {
@@ -332,7 +312,7 @@ get_server_socket (const char *name, const char *proto, int port)
       close (sockfd);
       return 0;
     }
-  runtime.vapi.server_port = ntohs (sa.sin_port);
+  sim->runtime.vapi.server_port = ntohs (sa.sin_port);
 
   /* Set the backlog to 1 connections */
   if (listen (sockfd, 1) < 0)
@@ -347,12 +327,12 @@ get_server_socket (const char *name, const char *proto, int port)
 }
 
 static void
-server_request ()
+server_request (or1ksim *sim)
 {
   struct sockaddr_in sa;
   struct sockaddr *addr = (struct sockaddr *) &sa;
   socklen_t len = sizeof (struct sockaddr_in);
-  int fd = accept (server_fd, addr, &len);
+  int fd = accept (sim->vapi.server_fd, addr, &len);
   int on_off = 0;		/* Turn off Nagel's algorithm on the socket */
   int flags;
   char sTemp[256];
@@ -365,10 +345,10 @@ server_request ()
       if (errno != EWOULDBLOCK && errno != EAGAIN)
 	{
 	  perror ("accept");
-	  close (server_fd);
-	  server_fd = 0;
-	  runtime.vapi.enabled = 0;
-	  serverIP = 0;
+	  close (sim->vapi.server_fd);
+	  sim->vapi.server_fd = 0;
+	  sim->runtime.vapi.enabled = 0;
+	  sim->vapi.serverIP = 0;
 	}
       return;
     }
@@ -391,7 +371,7 @@ server_request ()
       return;
     }
 
-  if (setsockopt (fd, tcp_level, TCP_NODELAY, &on_off, sizeof (int)) < 0)
+  if (setsockopt (fd, sim->vapi.tcp_level, TCP_NODELAY, &on_off, sizeof (int)) < 0)
     {
       sprintf (sTemp,
 	       "Unable to disable Nagel's algorithm for socket %d.\nsetsockopt",
@@ -411,7 +391,7 @@ server_request ()
 	close (fd);
 	return;
       }
-    t = find_handler (id);
+    t = find_handler (sim,id);
     if (t)
       {
 	if (t->fd)
@@ -425,7 +405,7 @@ server_request ()
 	else
 	  {
 	    t->fd = fd;
-	    rebuild_fds ();
+	    rebuild_fds (sim);
 	  }
       }
     else
@@ -435,15 +415,15 @@ server_request ()
 	close (fd);		/* kill the connection */
 	return;
       }
-    if (config.sim.verbose)
+    if (sim->config.sim.verbose)
       PRINTF ("\nConnection with test (id %lx) established.\n", id);
   }
 }
 
 static int
-write_packet (unsigned long id, unsigned long data)
+write_packet (or1ksim *sim, unsigned long id, unsigned long data)
 {
-  struct vapi_handler *t = find_handler (id);
+  struct vapi_handler *t = find_handler (sim, id);
   if (!t || !t->fd)
     return 1;
   id = htonl (id);
@@ -470,7 +450,7 @@ read_packet (int fd, unsigned long *id, unsigned long *data)
 }
 
 static void
-vapi_request (struct vapi_handler *t)
+vapi_request (or1ksim *sim, struct vapi_handler *t)
 {
   unsigned long id, data;
 
@@ -481,30 +461,30 @@ vapi_request (struct vapi_handler *t)
 	  perror ("vapi read");
 	  close (t->fd);
 	  t->fd = 0;
-	  rebuild_fds ();
+	  rebuild_fds (sim);
 	}
       return;
     }
 
-  vapi_write_log_file (VAPI_COMMAND_REQUEST, id, data);
+  vapi_write_log_file (sim, VAPI_COMMAND_REQUEST, id, data);
 
   /* This packet may be for another handler */
   if (!handler_fits_id (t, id))
-    t = find_handler (id);
+    t = find_handler (sim, id);
   if (!t || !t->read_func)
     fprintf (stderr,
 	     "WARNING: Received packet for undefined id %08lx, data %08lx\n",
 	     id, data);
   else
-    t->read_func (id, data, t->priv_dat);
+    t->read_func (sim, id, data, t->priv_dat);
 }
 
 void
-vapi_check ()
+vapi_check (or1ksim *sim)
 {
   struct vapi_handler *t;
 
-  if (!server_fd || !fds)
+  if (!sim->vapi.server_fd || !sim->vapi.fds)
     {
       fprintf (stderr, "FATAL: Unable to maintain VAPI server.\n");
       exit (1);
@@ -513,39 +493,39 @@ vapi_check ()
   /* Handle everything in queue. */
   while (1)
     {
-      switch (poll (fds, nfds, 0))
+      switch (poll (sim->vapi.fds, sim->vapi.nfds, 0))
 	{
 	case -1:
 	  if (errno == EINTR)
 	    continue;
 	  perror ("poll");
-	  if (server_fd)
-	    close (server_fd);
-	  runtime.vapi.enabled = 0;
-	  serverIP = 0;
+	  if (sim->vapi.server_fd)
+	    close (sim->vapi.server_fd);
+	  sim->runtime.vapi.enabled = 0;
+	  sim->vapi.serverIP = 0;
 	  return;
 	case 0:		/* Nothing interesting going on */
 	  return;
 	default:
 	  /* Handle the vapi ports first. */
-	  for (t = vapi_handler; t; t = t->next)
-	    if (t->temp >= 0 && fds[t->temp].revents)
-	      vapi_request (t);
+	  for (t = sim->vapi.vapi_handler; t; t = t->next)
+	    if (t->temp >= 0 && sim->vapi.fds[t->temp].revents)
+	      vapi_request (sim,t);
 
-	  if (fds[0].revents)
+	  if (sim->vapi.fds[0].revents)
 	    {
-	      if (fds[0].revents & POLLIN)
-		server_request ();
+	      if (sim->vapi.fds[0].revents & POLLIN)
+		server_request (sim);
 	      else
 		{		/* Error Occurred */
 		  fprintf (stderr,
 			   "Received flags 0x%08x on server. Shutting down.\n",
-			   fds[0].revents);
-		  if (server_fd)
-		    close (server_fd);
-		  server_fd = 0;
-		  runtime.vapi.enabled = 0;
-		  serverIP = 0;
+			   sim->vapi.fds[0].revents);
+		  if (sim->vapi.server_fd)
+		    close (sim->vapi.server_fd);
+		  sim->vapi.server_fd = 0;
+		  sim->runtime.vapi.enabled = 0;
+		  sim->vapi.serverIP = 0;
 		}
 	    }
 	  break;
@@ -555,32 +535,32 @@ vapi_check ()
 
 /* Inits the VAPI, according to sim-config */
 int
-vapi_init ()
+vapi_init (or1ksim *sim)
 {
-  nhandlers = 0;
-  vapi_handler = NULL;
-  if (!runtime.vapi.enabled)
+  sim->vapi.nhandlers = 0;
+  sim->vapi.vapi_handler = NULL;
+  if (!sim->runtime.vapi.enabled)
     return 0;			/* Nothing to do */
 
-  runtime.vapi.server_port = config.vapi.server_port;
-  if (!runtime.vapi.server_port)
+  sim->runtime.vapi.server_port = sim->config.vapi.server_port;
+  if (!sim->runtime.vapi.server_port)
     {
       fprintf (stderr, "WARNING: server_port = 0, shutting down VAPI\n");
-      runtime.vapi.enabled = 0;
+      sim->runtime.vapi.enabled = 0;
       return 1;
     }
-  if ((server_fd =
-       get_server_socket ("or1ksim", "tcp", runtime.vapi.server_port)))
-    PRINTF ("VAPI Server started on port %d\n", runtime.vapi.server_port);
+  if ((sim->vapi.server_fd =
+       get_server_socket (sim, "or1ksim", "tcp", sim->runtime.vapi.server_port)))
+    PRINTF ("VAPI Server started on port %d\n", sim->runtime.vapi.server_port);
   else
     {
       perror ("Connection");
       return 1;
     }
 
-  rebuild_fds ();
+  rebuild_fds (sim);
 
-  if ((runtime.vapi.vapi_file = fopen (config.vapi.vapi_fn, "wt+")) == NULL)
+  if ((sim->runtime.vapi.vapi_file = fopen (sim->config.vapi.vapi_fn, "wt+")) == NULL)
     fprintf (stderr, "WARNING: cannot open VAPI log file\n");
 
   return 0;
@@ -588,54 +568,54 @@ vapi_init ()
 
 /* Closes the VAPI */
 void
-vapi_done ()
+vapi_done (or1ksim *sim)
 {
   int i;
-  struct vapi_handler *t = vapi_handler;
+  struct vapi_handler *t = sim->vapi.vapi_handler;
 
-  for (i = 0; i < nfds; i++)
-    if (fds[i].fd)
-      close (fds[i].fd);
-  server_fd = 0;
-  runtime.vapi.enabled = 0;
-  serverIP = 0;
-  free (fds);
-  fds = 0;
-  if (runtime.vapi.vapi_file)
+  for (i = 0; i < sim->vapi.nfds; i++)
+    if (sim->vapi.fds[i].fd)
+      close (sim->vapi.fds[i].fd);
+  sim->vapi.server_fd = 0;
+  sim->runtime.vapi.enabled = 0;
+  sim->vapi.serverIP = 0;
+  free (sim->vapi.fds);
+  sim->vapi.fds = 0;
+  if (sim->runtime.vapi.vapi_file)
     {
       /* Mark end of simulation */
-      vapi_write_log_file (VAPI_COMMAND_END, 0, 0);
-      fclose (runtime.vapi.vapi_file);
+      vapi_write_log_file (sim, VAPI_COMMAND_END, 0, 0);
+      fclose (sim->runtime.vapi.vapi_file);
     }
 
-  while (vapi_handler)
+  while (sim->vapi.vapi_handler)
     {
-      t = vapi_handler;
-      vapi_handler = vapi_handler->next;
+      t = sim->vapi.vapi_handler;
+      sim->vapi.vapi_handler = sim->vapi.vapi_handler->next;
       free (t);
     }
 }
 
 /* Installs a vapi handler for one VAPI id */
 void
-vapi_install_handler (unsigned long id,
-		      void (*read_func) (unsigned long, unsigned long,
+vapi_install_handler (or1ksim *sim, unsigned long id,
+		      void (*read_func) (or1ksim *sim,unsigned long, unsigned long,
 					 void *), void *dat)
 {
-  vapi_install_multi_handler (id, 1, read_func, dat);
+  vapi_install_multi_handler (sim, id, 1, read_func, dat);
 }
 
 /* Installs a vapi handler for many VAPI id */
 void
-vapi_install_multi_handler (unsigned long base_id, unsigned long num_ids,
-			    void (*read_func) (unsigned long, unsigned long,
+vapi_install_multi_handler (or1ksim *sim, unsigned long base_id, unsigned long num_ids,
+			    void (*read_func) (or1ksim *sim,unsigned long, unsigned long,
 					       void *), void *dat)
 {
   struct vapi_handler *tt;
 
   if (read_func == NULL)
     {
-      struct vapi_handler **t = &vapi_handler;
+      struct vapi_handler **t = &sim->vapi.vapi_handler;
       while ((*t) && !handler_fits_id (*t, base_id))
 	t = &(*t)->next;
       if (!t)
@@ -647,14 +627,14 @@ vapi_install_multi_handler (unsigned long base_id, unsigned long num_ids,
       tt = *t;
       (*t) = (*t)->next;
       free (tt);
-      nhandlers--;
+      sim->vapi.nhandlers--;
     }
   else
     {
-      tt = find_handler (base_id);
+      tt = find_handler (sim, base_id);
       if (!tt)
 	{
-	  tt = add_handler (base_id, num_ids);
+	  tt = add_handler (sim, base_id, num_ids);
 	  tt->read_func = read_func;
 	  tt->priv_dat = dat;
 	}
@@ -662,16 +642,16 @@ vapi_install_multi_handler (unsigned long base_id, unsigned long num_ids,
 	{
 	  tt->read_func = read_func;
 	  tt->priv_dat = dat;
-	  rebuild_fds ();
+	  rebuild_fds (sim);
 	}
     }
 }
 
 /* Returns number of unconnected handles.  */
 int
-vapi_num_unconnected (int printout)
+vapi_num_unconnected (or1ksim *sim, int printout)
 {
-  struct vapi_handler *t = vapi_handler;
+  struct vapi_handler *t = sim->vapi.vapi_handler;
   int numu = 0;
   for (; t; t = t->next)
     {
@@ -693,16 +673,16 @@ vapi_num_unconnected (int printout)
 
 /* Sends a packet to specified test */
 void
-vapi_send (unsigned long id, unsigned long data)
+vapi_send (or1ksim *sim, unsigned long id, unsigned long data)
 {
-  vapi_write_log_file (VAPI_COMMAND_SEND, id, data);
-  write_packet (id, data);
+  vapi_write_log_file (sim,VAPI_COMMAND_SEND, id, data);
+  write_packet (sim, id, data);
 }
 
 /*
 int main ()
 {
-  runtime.vapi.enabled = 1;
+  sim->runtime.vapi.enabled = 1;
   config.vapi.server_port = 9999;
   vapi_init ();
   while (1) {
@@ -715,9 +695,9 @@ int main ()
 /*---------------------------------------------------[ VAPI configuration ]---*/
 
 static void
-vapi_enabled (union param_val val, void *dat)
+vapi_enabled (or1ksim *sim, union param_val val, void *dat)
 {
-  config.vapi.enabled = val.int_val;
+  sim->config.vapi.enabled = val.int_val;
 }
 
 
@@ -730,7 +710,7 @@ vapi_enabled (union param_val val, void *dat)
    @param[in] dat  The config data structure (not used here)                 */
 /*---------------------------------------------------------------------------*/
 static void
-vapi_server_port (union param_val val, void *dat)
+vapi_server_port (or1ksim *sim, union param_val val, void *dat)
 {
   if ((val.int_val < 1) || (val.int_val > 65535))
     {
@@ -738,21 +718,21 @@ vapi_server_port (union param_val val, void *dat)
     }
   else
     {
-      config.vapi.server_port = val.int_val;
+      sim->config.vapi.server_port = val.int_val;
     }
 }	/* vapi_server_port() */
 
 
 static void
-vapi_log_enabled (union param_val val, void *dat)
+vapi_log_enabled (or1ksim *sim, union param_val val, void *dat)
 {
-  config.vapi.log_enabled = val.int_val;
+  sim->config.vapi.log_enabled = val.int_val;
 }
 
 static void
-vapi_hide_device_id (union param_val val, void *dat)
+vapi_hide_device_id (or1ksim *sim, union param_val val, void *dat)
 {
-  config.vapi.hide_device_id = val.int_val;
+  sim->config.vapi.hide_device_id = val.int_val;
 }
 
 
@@ -765,23 +745,23 @@ vapi_hide_device_id (union param_val val, void *dat)
    @param[in] dat  The config data structure (not used here)                 */
 /*---------------------------------------------------------------------------*/
 static void
-vapi_log_fn (union param_val  val,
+vapi_log_fn (or1ksim *sim, union param_val  val,
 	     void            *dat)
 {
-  if (NULL != config.vapi.vapi_fn)
+  if (NULL != sim->config.vapi.vapi_fn)
     {
-      free (config.vapi.vapi_fn);
+      free (sim->config.vapi.vapi_fn);
     }
 
-  config.vapi.vapi_fn = strdup (val.str_val);
+  sim->config.vapi.vapi_fn = strdup (val.str_val);
 
 }	/* vapi_log_fn() */
 
 
 void
-reg_vapi_sec (void)
+reg_vapi_sec (or1ksim *sim)
 {
-  struct config_section *sec = reg_config_sec ("VAPI", NULL, NULL);
+  struct config_section *sec = reg_config_sec (sim, "VAPI", NULL, NULL);
 
   reg_config_param (sec, "enabled", paramt_int, vapi_enabled);
   reg_config_param (sec, "server_port", paramt_int, vapi_server_port);

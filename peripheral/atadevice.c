@@ -3,6 +3,7 @@
 
    Copyright (C) 2002 Richard Herveille, rherveille@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -309,7 +310,7 @@ ata_device_do_control_register (struct ata_device * device)
   D E V I C E S _ D O _ C O M M A N D _ R E G I S T E R
 */
 static void
-ata_device_do_command_register (struct ata_device * device)
+ata_device_do_command_register (or1ksim *sim, struct ata_device * device)
 {
   /* check BSY & DRQ                                                  */
   if ((device->regs.status & ATA_SR_BSY)
@@ -324,12 +325,12 @@ ata_device_do_command_register (struct ata_device * device)
 
   /* check if device selected                                         */
   if ((device->regs.device_head & ATA_DHR_DEV) == device->internals.dev)
-    ata_device_execute_cmd (device);
+    ata_device_execute_cmd (sim, device);
   else
     {
       /* if not selected, only respond to EXECUTE DEVICE DIAGNOSTICS  */
       if (device->regs.command == EXECUTE_DEVICE_DIAGNOSTICS)
-	ata_device_execute_cmd (device);
+	ata_device_execute_cmd (sim, device);
     }
 }
 
@@ -339,7 +340,7 @@ ata_device_do_command_register (struct ata_device * device)
 */
 /* Read from devices                                                  */
 short
-ata_devices_read (struct ata_devices * devices, char adr)
+ata_devices_read (or1ksim *sim, struct ata_devices * devices, char adr)
 {
   struct ata_device *device;
 
@@ -400,7 +401,7 @@ ata_devices_read (struct ata_devices * devices, char adr)
 		{
 		  device->regs.status &= ~ATA_SR_DRQ;
 		  if (device->internals.end_t_func)
-		    device->internals.end_t_func (device);
+		    device->internals.end_t_func (sim, device);
 		}
 	      return val;
 	    }
@@ -440,7 +441,7 @@ ata_devices_read (struct ata_devices * devices, char adr)
 */
 /* write to a single device                                           */
 static void
-ata_device_write (struct ata_device * device, char adr, short value)
+ata_device_write (or1ksim *sim, struct ata_device * device, char adr, short value)
 {
   switch (adr)
     {
@@ -448,7 +449,7 @@ ata_device_write (struct ata_device * device, char adr, short value)
       device->regs.command = value;
 
       /* check command register settings and execute command    */
-      ata_device_do_command_register (device);
+      ata_device_do_command_register (sim, device);
       break;
 
 
@@ -472,7 +473,7 @@ ata_device_write (struct ata_device * device, char adr, short value)
 	    {
 	      device->regs.status &= ~ATA_SR_DRQ;
 	      if (device->internals.end_t_func)
-		device->internals.end_t_func (device);
+		device->internals.end_t_func (sim, device);
 	    }
 	}
       device->regs.dataport_i = value;
@@ -504,7 +505,7 @@ ata_device_write (struct ata_device * device, char adr, short value)
 
 /* Write to devices                                                   */
 void
-ata_devices_write (struct ata_devices * devices, char adr, short value)
+ata_devices_write (or1ksim *sim, struct ata_devices * devices, char adr, short value)
 {
   /* check for no connected devices                                 */
   if (!devices->device[0].conf.stream && !devices->device[1].conf.stream)
@@ -516,10 +517,10 @@ ata_devices_write (struct ata_devices * devices, char adr, short value)
     {
       /* first device                                                 */
       if (devices->device[0].conf.stream)
-	ata_device_write (&devices->device[0], adr, value);
+	ata_device_write (sim, &devices->device[0], adr, value);
 
       /* second device                                                */
       if (devices->device[1].conf.stream)
-	ata_device_write (&devices->device[1], adr, value);
+	ata_device_write (sim, &devices->device[1], adr, value);
     }
 }

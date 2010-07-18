@@ -2,6 +2,7 @@
 
    Copyright (C) 2002 Richard Herveille, rherveille@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -53,7 +54,7 @@
 
 /* reset and initialize ATA host core(s) */
 static void
-ata_reset (void *dat)
+ata_reset (or1ksim *sim, void *dat)
 {
   struct ata_host *ata = dat;
 
@@ -83,13 +84,13 @@ ata_reset (void *dat)
 
 /* Assert interrupt */
 void
-ata_int (void *dat)
+ata_int (or1ksim *sim,void *dat)
 {
   struct ata_host *ata = dat;
   if (!(ata->regs.stat & ATA_IDEIS))
     {
       ata->regs.stat |= ATA_IDEIS;
-      report_interrupt (ata->irq);
+      report_interrupt (sim,ata->irq);
     }
 }
 
@@ -100,7 +101,7 @@ ata_int (void *dat)
   Read a register
 */
 static uint32_t
-ata_read32 (oraddr_t addr, void *dat)
+ata_read32 (or1ksim *sim, oraddr_t addr, void *dat)
 {
   struct ata_host *ata = dat;
 
@@ -158,7 +159,7 @@ ata_read32 (oraddr_t addr, void *dat)
 	adjust_rw_delay (ata->mem, ata_pio_delay (ata->regs.pctr),
 			 ata_pio_delay (ata->regs.pctr));
 
-      return ata_devices_read (&ata->devices, addr & 0x7f);
+      return ata_devices_read (sim, &ata->devices, addr & 0x7f);
     }
   return 0;
 }
@@ -170,7 +171,7 @@ ata_read32 (oraddr_t addr, void *dat)
   Write a register
 */
 static void
-ata_write32 (oraddr_t addr, uint32_t value, void *dat)
+ata_write32 (or1ksim *sim,oraddr_t addr, uint32_t value, void *dat)
 {
   struct ata_host *ata = dat;
 
@@ -195,7 +196,7 @@ ata_write32 (oraddr_t addr, uint32_t value, void *dat)
 	case ATA_STAT:
 	  if (!(value & ATA_IDEIS) && (ata->regs.stat & ATA_IDEIS))
 	    {
-	      clear_interrupt (ata->irq);
+	      clear_interrupt (sim,ata->irq);
 	      ata->regs.stat &= ~ATA_IDEIS;
 	    }
 	  break;
@@ -258,7 +259,7 @@ ata_write32 (oraddr_t addr, uint32_t value, void *dat)
       if ((addr & 0x7f) == ATA_DHR)
 	ata->dev_sel = value & ATA_DHR_DEV;
 
-      ata_devices_write (&ata->devices, addr & 0x7f, value);
+      ata_devices_write (sim, &ata->devices, addr & 0x7f, value);
     }
 }
 
@@ -267,7 +268,7 @@ ata_write32 (oraddr_t addr, uint32_t value, void *dat)
 
 /* Dump status */
 static void
-ata_status (void *dat)
+ata_status (or1ksim *sim, void *dat)
 {
   struct ata_host *ata = dat;
 
@@ -297,24 +298,22 @@ ata_status (void *dat)
 /* ========================================================================= */
 
 /*----------------------------------------------------[ ATA Configuration ]---*/
-static unsigned int conf_dev;
-
 static void
-ata_baseaddr (union param_val val, void *dat)
+ata_baseaddr (or1ksim *sim,union param_val val, void *dat)
 {
   struct ata_host *ata = dat;
   ata->baseaddr = val.addr_val;
 }
 
 static void
-ata_irq (union param_val val, void *dat)
+ata_irq (or1ksim *sim,union param_val val, void *dat)
 {
   struct ata_host *ata = dat;
   ata->irq = val.int_val;
 }
 
 static void
-ata_dev_id (union param_val val, void *dat)
+ata_dev_id (or1ksim *sim,union param_val val, void *dat)
 {
   struct ata_host *ata = dat;
   if (val.int_val < 1 || val.int_val > 3)
@@ -339,7 +338,7 @@ ata_dev_id (union param_val val, void *dat)
    @param[in] dat  The config data structure                                 */
 /*---------------------------------------------------------------------------*/
 static void
-ata_rev (union param_val val, void *dat)
+ata_rev (or1ksim *sim,union param_val val, void *dat)
 {
   struct ata_host *ata = dat;
 
@@ -352,7 +351,7 @@ ata_rev (union param_val val, void *dat)
 }
 
 static void
-ata_pio_mode0_t1 (union param_val val, void *dat)
+ata_pio_mode0_t1 (or1ksim *sim,union param_val val, void *dat)
 {
   struct ata_host *ata = dat;
 
@@ -367,7 +366,7 @@ ata_pio_mode0_t1 (union param_val val, void *dat)
 }
 
 static void
-ata_pio_mode0_t2 (union param_val val, void *dat)
+ata_pio_mode0_t2 (or1ksim *sim,union param_val val, void *dat)
 {
   struct ata_host *ata = dat;
 
@@ -382,7 +381,7 @@ ata_pio_mode0_t2 (union param_val val, void *dat)
 }
 
 static void
-ata_pio_mode0_t4 (union param_val val, void *dat)
+ata_pio_mode0_t4 (or1ksim *sim,union param_val val, void *dat)
 {
   struct ata_host *ata = dat;
 
@@ -397,7 +396,7 @@ ata_pio_mode0_t4 (union param_val val, void *dat)
 }
 
 static void
-ata_pio_mode0_teoc (union param_val val, void *dat)
+ata_pio_mode0_teoc (or1ksim *sim,union param_val val, void *dat)
 {
   struct ata_host *ata = dat;
 
@@ -412,7 +411,7 @@ ata_pio_mode0_teoc (union param_val val, void *dat)
 }
 
 static void
-ata_dma_mode0_tm (union param_val val, void *dat)
+ata_dma_mode0_tm (or1ksim *sim,union param_val val, void *dat)
 {
   struct ata_host *ata = dat;
 
@@ -427,7 +426,7 @@ ata_dma_mode0_tm (union param_val val, void *dat)
 }
 
 static void
-ata_dma_mode0_td (union param_val val, void *dat)
+ata_dma_mode0_td (or1ksim *sim,union param_val val, void *dat)
 {
   struct ata_host *ata = dat;
 
@@ -442,7 +441,7 @@ ata_dma_mode0_td (union param_val val, void *dat)
 }
 
 static void
-ata_dma_mode0_teoc (union param_val val, void *dat)
+ata_dma_mode0_teoc (or1ksim *sim,union param_val val, void *dat)
 {
   struct ata_host *ata = dat;
 
@@ -457,11 +456,11 @@ ata_dma_mode0_teoc (union param_val val, void *dat)
 }
 
 static void
-ata_type (union param_val val, void *dat)
+ata_type (or1ksim *sim,union param_val val, void *dat)
 {
   struct ata_host *ata = dat;
-  if (conf_dev <= 1)
-    ata->devices.device[conf_dev].conf.type = val.int_val;
+  if (sim->conf_dev <= 1)
+    ata->devices.device[sim->conf_dev].conf.type = val.int_val;
 }
 
 
@@ -474,19 +473,19 @@ ata_type (union param_val val, void *dat)
    @param[in] dat  The config data structure                                 */
 /*---------------------------------------------------------------------------*/
 static void
-ata_file (union param_val val, void *dat)
+ata_file (or1ksim *sim,union param_val val, void *dat)
 {
   struct ata_host *ata = dat;
 
-  if (conf_dev <= 1)
+  if (sim->conf_dev <= 1)
     {
-      if (NULL != ata->devices.device[conf_dev].conf.file)
+      if (NULL != ata->devices.device[sim->conf_dev].conf.file)
 	{
-	  free (ata->devices.device[conf_dev].conf.file);
-	  ata->devices.device[conf_dev].conf.file = NULL;
+	  free (ata->devices.device[sim->conf_dev].conf.file);
+	  ata->devices.device[sim->conf_dev].conf.file = NULL;
 	}
 
-      if (!(ata->devices.device[conf_dev].conf.file = strdup (val.str_val)))
+      if (!(ata->devices.device[sim->conf_dev].conf.file = strdup (val.str_val)))
 	{
 	  fprintf (stderr, "Peripheral ATA: Run out of memory\n");
 	  exit (-1);
@@ -496,50 +495,50 @@ ata_file (union param_val val, void *dat)
 
 
 static void
-ata_size (union param_val val, void *dat)
+ata_size (or1ksim *sim,union param_val val, void *dat)
 {
   struct ata_host *ata = dat;
-  if (conf_dev <= 1)
-    ata->devices.device[conf_dev].conf.size = val.int_val << 20;
+  if (sim->conf_dev <= 1)
+    ata->devices.device[sim->conf_dev].conf.size = val.int_val << 20;
 }
 
 static void
-ata_packet (union param_val val, void *dat)
+ata_packet (or1ksim *sim,union param_val val, void *dat)
 {
   struct ata_host *ata = dat;
-  if (conf_dev <= 1)
-    ata->devices.device[conf_dev].conf.packet = val.int_val;
+  if (sim->conf_dev <= 1)
+    ata->devices.device[sim->conf_dev].conf.packet = val.int_val;
 }
 
 static void
-ata_enabled (union param_val val, void *dat)
+ata_enabled (or1ksim *sim,union param_val val, void *dat)
 {
   struct ata_host *ata = dat;
   ata->enabled = val.int_val;
 }
 
 static void
-ata_heads (union param_val val, void *dat)
+ata_heads (or1ksim *sim,union param_val val, void *dat)
 {
   struct ata_host *ata = dat;
-  if (conf_dev <= 1)
-    ata->devices.device[conf_dev].conf.heads = val.int_val;
+  if (sim->conf_dev <= 1)
+    ata->devices.device[sim->conf_dev].conf.heads = val.int_val;
 }
 
 static void
-ata_sectors (union param_val val, void *dat)
+ata_sectors (or1ksim *sim,union param_val val, void *dat)
 {
   struct ata_host *ata = dat;
-  if (conf_dev <= 1)
-    ata->devices.device[conf_dev].conf.sectors = val.int_val;
+  if (sim->conf_dev <= 1)
+    ata->devices.device[sim->conf_dev].conf.sectors = val.int_val;
 }
 
 static void
-ata_firmware (union param_val val, void *dat)
+ata_firmware (or1ksim *sim,union param_val val, void *dat)
 {
   struct ata_host *ata = dat;
-  if (conf_dev <= 1)
-    if (!(ata->devices.device[conf_dev].conf.firmware = strdup (val.str_val)))
+  if (sim->conf_dev <= 1)
+    if (!(ata->devices.device[sim->conf_dev].conf.firmware = strdup (val.str_val)))
       {
 	fprintf (stderr, "Peripheral ATA: Run out of memory\n");
 	exit (-1);
@@ -556,14 +555,14 @@ ata_firmware (union param_val val, void *dat)
    @param[in] dat  The config data structure                                 */
 /*---------------------------------------------------------------------------*/
 static void
-ata_mwdma (union param_val  val,
+ata_mwdma (or1ksim *sim,union param_val  val,
 	   void            *dat)
 {
   struct ata_host *ata = dat;
 
   if ((val.int_val >= -1) && (val.int_val <= 2))
     {
-      ata->devices.device[conf_dev].conf.mwdma = val.int_val;
+      ata->devices.device[sim->conf_dev].conf.mwdma = val.int_val;
     }
   else
     {
@@ -581,14 +580,14 @@ ata_mwdma (union param_val  val,
    @param[in] dat  The config data structure                                 */
 /*---------------------------------------------------------------------------*/
 static void
-ata_pio (union param_val  val,
+ata_pio (or1ksim *sim,union param_val  val,
 	 void            *dat)
 {
   struct ata_host *ata = dat;
 
   if ((val.int_val >= 0) && (val.int_val <= 4))
     {
-      ata->devices.device[conf_dev].conf.pio = val.int_val;
+      ata->devices.device[sim->conf_dev].conf.pio = val.int_val;
     }
   else
     {
@@ -598,18 +597,18 @@ ata_pio (union param_val  val,
 
 
 static void
-ata_start_device (union param_val val, void *dat)
+ata_start_device (or1ksim *sim,union param_val val, void *dat)
 {
-  conf_dev = val.int_val;
+  sim->conf_dev = val.int_val;
 
-  if (conf_dev > 1)
-    fprintf (stderr, "Device %d out-of-range\n", conf_dev);
+  if (sim->conf_dev > 1)
+    fprintf (stderr, "Device %d out-of-range\n", sim->conf_dev);
 }
 
 static void
-ata_enddevice (union param_val val, void *dat)
+ata_enddevice (or1ksim *sim,union param_val val, void *dat)
 {
-  conf_dev = 2;
+  sim->conf_dev = 2;
 }
 
 /*---------------------------------------------------------------------------*/
@@ -618,7 +617,7 @@ ata_enddevice (union param_val val, void *dat)
    ALL parameters are set explicitly to default values.                      */
 /*---------------------------------------------------------------------------*/
 static void *
-ata_sec_start (void)
+ata_sec_start (or1ksim *sim)
 {
   struct ata_host *new = malloc (sizeof (struct ata_host));
 
@@ -671,7 +670,7 @@ ata_sec_start (void)
 
 
 static void
-ata_sec_end (void *dat)
+ata_sec_end (or1ksim *sim,void *dat)
 {
   struct ata_host *ata = dat;
   struct mem_ops ops;
@@ -698,17 +697,17 @@ ata_sec_end (void *dat)
   ops.delayr = 2;
   ops.delayw = 2;
 
-  ata->mem = reg_mem_area (ata->baseaddr, ATA_ADDR_SPACE, 0, &ops);
+  ata->mem = reg_mem_area (sim, ata->baseaddr, ATA_ADDR_SPACE, 0, &ops);
 
-  reg_sim_reset (ata_reset, dat);
-  reg_sim_stat (ata_status, dat);
+  reg_sim_reset (sim, ata_reset, dat);
+  reg_sim_stat (sim, ata_status, dat);
 }
 
 void
-reg_ata_sec ()
+reg_ata_sec (or1ksim *sim)
 {
   struct config_section *sec =
-    reg_config_sec ("ata", ata_sec_start, ata_sec_end);
+    reg_config_sec (sim, "ata", ata_sec_start, ata_sec_end);
 
   reg_config_param (sec, "enabled", paramt_int, ata_enabled);
   reg_config_param (sec, "baseaddr", paramt_addr, ata_baseaddr);

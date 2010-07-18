@@ -18,6 +18,7 @@
 #
 # Copyright (C) 1999 OpenCores
 # Copyright (C) 2008 Embecosm Limited
+# Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 #
 # Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 #
@@ -59,7 +60,7 @@ host_triplet = @host@
 target_triplet = @target@
 bin_PROGRAMS = sim$(EXEEXT) profile$(EXEEXT) mprofile$(EXEEXT)
 subdir = .
-DIST_COMMON = README $(am__configure_deps) $(include_HEADERS) \
+DIST_COMMON = README $(am__configure_deps) $(nobase_include_HEADERS) \
 	$(srcdir)/Makefile.am $(srcdir)/Makefile.in \
 	$(srcdir)/config.h.in $(top_srcdir)/configure AUTHORS COPYING \
 	ChangeLog INSTALL NEWS compile config.guess config.sub depcomp \
@@ -133,8 +134,8 @@ RECURSIVE_TARGETS = all-recursive check-recursive dvi-recursive \
 	install-pdf-recursive install-ps-recursive install-recursive \
 	installcheck-recursive installdirs-recursive pdf-recursive \
 	ps-recursive uninstall-recursive
-includeHEADERS_INSTALL = $(INSTALL_HEADER)
-HEADERS = $(include_HEADERS)
+nobase_includeHEADERS_INSTALL = $(install_sh_DATA)
+HEADERS = $(nobase_include_HEADERS)
 RECURSIVE_CLEAN_TARGETS = mostlyclean-recursive clean-recursive	\
   distclean-recursive maintainer-clean-recursive
 ETAGS = etags
@@ -290,7 +291,7 @@ SUBDIRS = argtable2  \
                         port
 
 lib_LTLIBRARIES = libsim.la
-include_HEADERS = or1ksim.h
+nobase_include_HEADERS = or1ksim.h siminstance.h types.h defines.h support/dbchs.h
 
 # The internal library
 noinst_LTLIBRARIES = libor1ksys.la
@@ -532,20 +533,22 @@ clean-libtool:
 
 distclean-libtool:
 	-rm -f libtool
-install-includeHEADERS: $(include_HEADERS)
+install-nobase_includeHEADERS: $(nobase_include_HEADERS)
 	@$(NORMAL_INSTALL)
 	test -z "$(includedir)" || $(MKDIR_P) "$(DESTDIR)$(includedir)"
-	@list='$(include_HEADERS)'; for p in $$list; do \
+	@$(am__vpath_adj_setup) \
+	list='$(nobase_include_HEADERS)'; for p in $$list; do \
 	  if test -f "$$p"; then d=; else d="$(srcdir)/"; fi; \
-	  f=$(am__strip_dir) \
-	  echo " $(includeHEADERS_INSTALL) '$$d$$p' '$(DESTDIR)$(includedir)/$$f'"; \
-	  $(includeHEADERS_INSTALL) "$$d$$p" "$(DESTDIR)$(includedir)/$$f"; \
+	  $(am__vpath_adj) \
+	  echo " $(nobase_includeHEADERS_INSTALL) '$$d$$p' '$(DESTDIR)$(includedir)/$$f'"; \
+	  $(nobase_includeHEADERS_INSTALL) "$$d$$p" "$(DESTDIR)$(includedir)/$$f"; \
 	done
 
-uninstall-includeHEADERS:
+uninstall-nobase_includeHEADERS:
 	@$(NORMAL_UNINSTALL)
-	@list='$(include_HEADERS)'; for p in $$list; do \
-	  f=$(am__strip_dir) \
+	@$(am__vpath_adj_setup) \
+	list='$(nobase_include_HEADERS)'; for p in $$list; do \
+	  $(am__vpath_adj) \
 	  echo " rm -f '$(DESTDIR)$(includedir)/$$f'"; \
 	  rm -f "$(DESTDIR)$(includedir)/$$f"; \
 	done
@@ -884,7 +887,7 @@ info: info-recursive
 
 info-am:
 
-install-data-am: install-includeHEADERS
+install-data-am: install-nobase_includeHEADERS
 
 install-dvi: install-dvi-recursive
 
@@ -922,8 +925,8 @@ ps: ps-recursive
 
 ps-am:
 
-uninstall-am: uninstall-binPROGRAMS uninstall-includeHEADERS \
-	uninstall-libLTLIBRARIES
+uninstall-am: uninstall-binPROGRAMS uninstall-libLTLIBRARIES \
+	uninstall-nobase_includeHEADERS
 
 .MAKE: $(RECURSIVE_CLEAN_TARGETS) $(RECURSIVE_TARGETS) install-am \
 	install-strip
@@ -938,16 +941,16 @@ uninstall-am: uninstall-binPROGRAMS uninstall-includeHEADERS \
 	distdir distuninstallcheck dvi dvi-am html html-am info \
 	info-am install install-am install-binPROGRAMS install-data \
 	install-data-am install-dvi install-dvi-am install-exec \
-	install-exec-am install-html install-html-am \
-	install-includeHEADERS install-info install-info-am \
-	install-libLTLIBRARIES install-man install-pdf install-pdf-am \
+	install-exec-am install-html install-html-am install-info \
+	install-info-am install-libLTLIBRARIES install-man \
+	install-nobase_includeHEADERS install-pdf install-pdf-am \
 	install-ps install-ps-am install-strip installcheck \
 	installcheck-am installdirs installdirs-am maintainer-clean \
 	maintainer-clean-generic mostlyclean mostlyclean-compile \
 	mostlyclean-generic mostlyclean-libtool pdf pdf-am ps ps-am \
 	tags tags-recursive uninstall uninstall-am \
-	uninstall-binPROGRAMS uninstall-includeHEADERS \
-	uninstall-libLTLIBRARIES
+	uninstall-binPROGRAMS uninstall-libLTLIBRARIES \
+	uninstall-nobase_includeHEADERS
 
 # Tell versions [3.59,3.63) of GNU make to not export all variables.
 # Otherwise a system limit (for SysV at least) may be exceeded.

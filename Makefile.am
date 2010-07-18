@@ -2,6 +2,7 @@
 #
 # Copyright (C) 1999 OpenCores
 # Copyright (C) 2008 Embecosm Limited
+# Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 #
 # Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 #
@@ -41,7 +42,7 @@ SUBDIRS               = argtable2  \
 
 bin_PROGRAMS          = sim profile mprofile
 lib_LTLIBRARIES       = libsim.la
-include_HEADERS       = or1ksim.h
+nobase_include_HEADERS       = or1ksim.h siminstance.h types.h defines.h support/dbchs.h
 
 # The internal library
 

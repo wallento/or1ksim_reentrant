@@ -2,6 +2,7 @@
 
    Copyright (C) 2001 Marko Mlinar, markom@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -84,7 +85,7 @@ change_buf_addr (struct fb_state *fb, oraddr_t addr)
 
 /* Write a register */
 static void
-fb_write32 (oraddr_t addr, uint32_t value, void *dat)
+fb_write32 (or1ksim *sim, oraddr_t addr, uint32_t value, void *dat)
 {
   struct fb_state *fb = dat;
 
@@ -120,7 +121,7 @@ fb_write32 (oraddr_t addr, uint32_t value, void *dat)
 
 /* Read a register */
 static oraddr_t
-fb_read32 (oraddr_t addr, void *dat)
+fb_read32 (or1ksim *sim, oraddr_t addr, void *dat)
 {
   struct fb_state *fb = dat;
 
@@ -171,7 +172,7 @@ fb_read32 (oraddr_t addr, void *dat)
 
 /* Dumps a bmp file, based on current image */
 static int
-fb_dump_image8 (struct fb_state *fb, char *filename)
+fb_dump_image8 (or1ksim *sim,struct fb_state *fb, char *filename)
 {
   int sx = FB_SIZEX;
   int sy = FB_SIZEY;
@@ -181,7 +182,7 @@ fb_dump_image8 (struct fb_state *fb, char *filename)
   unsigned short int u16;
   unsigned long int u32;
 
-  if (config.sim.verbose)
+  if (sim->config.sim.verbose)
     PRINTF ("Creating %s...", filename);
   fo = fopen (filename, "wb+");
   u16 = CNV16 (19778);		/* BM */
@@ -246,7 +247,7 @@ fb_dump_image8 (struct fb_state *fb, char *filename)
 	return 1;
     }
 
-  if (config.sim.verbose)
+  if (sim->config.sim.verbose)
     PRINTF ("(%i,%i)", sx, sy);
   /* Data is stored upside down */
   for (y = sy - 1; y >= 0; y--)
@@ -262,13 +263,13 @@ fb_dump_image8 (struct fb_state *fb, char *filename)
 	    (fb->
 	     addr & ~(FB_WRAP - 1)) | ((fb->addr + y * sx + x) & (FB_WRAP -
 								  1));
-	  fputc (eval_direct8 (add, 0, 0), fo);
+	  fputc (eval_direct8 (sim,add, 0, 0), fo);
 	}
       if (align && !fwrite (&zero, align, 1, fo))
 	return 1;
     }
 
-  if (config.sim.verbose)
+  if (sim->config.sim.verbose)
     PRINTF ("DONE\n");
   fclose (fo);
   return 0;
@@ -276,7 +277,7 @@ fb_dump_image8 (struct fb_state *fb, char *filename)
 
 /* Dumps a bmp file, based on current image */
 static int
-fb_dump_image24 (struct fb_state *fb, char *filename)
+fb_dump_image24 (or1ksim *sim,struct fb_state *fb, char *filename)
 {
   int sx = FB_SIZEX;
   int sy = FB_SIZEY;
@@ -286,7 +287,7 @@ fb_dump_image24 (struct fb_state *fb, char *filename)
   unsigned short int u16;
   unsigned long int u32;
 
-  if (config.sim.verbose)
+  if (sim->config.sim.verbose)
     PRINTF ("Creating %s...", filename);
   fo = fopen (filename, "wb+");
   u16 = CNV16 (19778);		/* BM */
@@ -336,7 +337,7 @@ fb_dump_image24 (struct fb_state *fb, char *filename)
   if (!fwrite (&u32, 4, 1, fo))
     return 1;
 
-  if (config.sim.verbose)
+  if (sim->config.sim.verbose)
     PRINTF ("(%i,%i)", sx, sy);
   /* Data is stored upside down */
   for (y = sy - 1; y >= 0; y--)
@@ -349,7 +350,7 @@ fb_dump_image24 (struct fb_state *fb, char *filename)
 	    int add =
 	      (fb->cam_addr +
 	       (x - fb->camerax + (y - fb->cameray) * CAM_SIZEX) * 2) ^ 2;
-	    unsigned short d = eval_direct16 (add, 0, 0);
+	    unsigned short d = eval_direct16 (sim,add, 0, 0);
 	    line[x][0] = ((d >> 0) & 0x1f) << 3;	/* Blue */
 	    line[x][1] = ((d >> 5) & 0x3f) << 2;	/* Green */
 	    line[x][2] = ((d >> 11) & 0x1f) << 3;	/* Red */
@@ -360,7 +361,7 @@ fb_dump_image24 (struct fb_state *fb, char *filename)
 	      (fb->
 	       addr & ~(FB_WRAP - 1)) | ((fb->addr + y * sx + x) & (FB_WRAP -
 								    1));
-	    unsigned short d = fb->pal[eval_direct8 (add, 0, 0)];
+	    unsigned short d = fb->pal[eval_direct8 (sim,add, 0, 0)];
 	    line[x][0] = ((d >> 0) & 0x1f) << 3;	/* Blue */
 	    line[x][1] = ((d >> 5) & 0x3f) << 2;	/* Green */
 	    line[x][2] = ((d >> 11) & 0x1f) << 3;	/* Red */
@@ -369,14 +370,14 @@ fb_dump_image24 (struct fb_state *fb, char *filename)
 	return 1;
     }
 
-  if (config.sim.verbose)
+  if (sim->config.sim.verbose)
     PRINTF ("DONE\n");
   fclose (fo);
   return 0;
 }
 
 static void
-fb_job (void *dat)
+fb_job (or1ksim *sim,void *dat)
 {
   struct fb_state *fb = dat;
 
@@ -388,9 +389,9 @@ fb_job (void *dat)
 	  char temp[STR_SIZE];
 	  sprintf (temp, "%s%04i.bmp", fb->filename, fb->pic);
 	  if (fb->ctrl & 2)
-	    fb_dump_image24 (fb, temp);
+	    fb_dump_image24 (sim,fb, temp);
 	  else
-	    fb_dump_image8 (fb, temp);
+	    fb_dump_image8 (sim,fb, temp);
 	  fb->pic++;
 	}
       SCHED_ADD (fb_job, dat, fb->refresh_rate / REFRESH_DIVIDER);
@@ -407,7 +408,7 @@ fb_job (void *dat)
 
 /* Reset all FBs */
 static void
-fb_reset (void *dat)
+fb_reset (or1ksim *sim, void *dat)
 {
   struct fb_state *fb = dat;
   int i;
@@ -425,7 +426,7 @@ fb_reset (void *dat)
 
 /*-----------------------------------------------------[ FB configuration ]---*/
 static void
-fb_enabled (union param_val val, void *dat)
+fb_enabled (or1ksim *sim,union param_val val, void *dat)
 {
   struct fb_state *fb = dat;
   fb->enabled = val.int_val;
@@ -433,7 +434,7 @@ fb_enabled (union param_val val, void *dat)
 
 
 static void
-fb_baseaddr (union param_val val, void *dat)
+fb_baseaddr (or1ksim *sim,union param_val val, void *dat)
 {
   struct fb_state *fb = dat;
   fb->baseaddr = val.addr_val;
@@ -441,7 +442,7 @@ fb_baseaddr (union param_val val, void *dat)
 
 
 static void
-fb_refresh_rate (union param_val val, void *dat)
+fb_refresh_rate (or1ksim *sim,union param_val val, void *dat)
 {
   struct fb_state *fb = dat;
   fb->refresh_rate = val.int_val;
@@ -457,7 +458,7 @@ fb_refresh_rate (union param_val val, void *dat)
    @param[in] dat  The config data structure                                 */
 /*---------------------------------------------------------------------------*/
 static void
-fb_filename (union param_val  val,
+fb_filename (or1ksim *sim,union param_val  val,
 	     void            *dat)
 {
   struct fb_state *fb = dat;
@@ -482,7 +483,7 @@ fb_filename (union param_val  val,
    ALL parameters are set explicitly to default values.                      */
 /*---------------------------------------------------------------------------*/
 static void *
-fb_sec_start ()
+fb_sec_start (or1ksim *sim)
 {
   struct fb_state *new = malloc (sizeof (struct fb_state));
 
@@ -494,7 +495,7 @@ fb_sec_start ()
 
   new->enabled       = 1;
   new->baseaddr      = 0;
-  new->refresh_rate  = 1000000000000ULL / 50ULL / config.sim.clkcycle_ps;
+  new->refresh_rate  = 1000000000000ULL / 50ULL / sim->config.sim.clkcycle_ps;
   new->filename      = strdup ("fb_out");
 
   new->ctrl          = 0;
@@ -513,7 +514,7 @@ fb_sec_start ()
 
 
 static void
-fb_sec_end (void *dat)
+fb_sec_end (or1ksim *sim, void *dat)
 {
   struct fb_state *fb = dat;
   struct mem_ops ops;
@@ -536,16 +537,16 @@ fb_sec_end (void *dat)
   ops.delayr = 2;
   ops.delayw = 2;
 
-  reg_mem_area (fb->baseaddr, FB_PAL + 256 * 4, 0, &ops);
+  reg_mem_area (sim, fb->baseaddr, FB_PAL + 256 * 4, 0, &ops);
 
-  reg_sim_reset (fb_reset, dat);
+  reg_sim_reset (sim, fb_reset, dat);
 }
 
 void
-reg_fb_sec ()
+reg_fb_sec (or1ksim *sim)
 {
   struct config_section *sec =
-    reg_config_sec ("fb", fb_sec_start, fb_sec_end);
+    reg_config_sec (sim, "fb", fb_sec_start, fb_sec_end);
 
   reg_config_param (sec, "baseaddr", paramt_addr, fb_baseaddr);
   reg_config_param (sec, "enabled", paramt_int, fb_enabled);

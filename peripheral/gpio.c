@@ -2,6 +2,7 @@
 
    Copyright (C) 2001 Erez Volk, erez@mailandnews.comopencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -116,15 +117,15 @@ struct gpio_device
   } curr, next;
 };
 
-static void gpio_vapi_read (unsigned long id, unsigned long data, void *dat);
-static void gpio_external_clock (unsigned long value,
+static void gpio_vapi_read (or1ksim *sim, unsigned long id, unsigned long data, void *dat);
+static void gpio_external_clock (or1ksim *sim, unsigned long value,
 				 struct gpio_device *gpio);
-static void gpio_device_clock (struct gpio_device *gpio);
-static void gpio_clock (void *dat);
+static void gpio_device_clock (or1ksim *sim, struct gpio_device *gpio);
+static void gpio_clock (or1ksim *sim, void *dat);
 
 /* Initialize all parameters and state */
 static void
-gpio_reset (void *dat)
+gpio_reset (or1ksim *sim, void *dat)
 {
   struct gpio_device *gpio = dat;
 
@@ -133,7 +134,7 @@ gpio_reset (void *dat)
       /* Possibly connect to VAPI */
       if (gpio->base_vapi_id)
 	{
-	  vapi_install_multi_handler (gpio->base_vapi_id, GPIO_NUM_VAPI_IDS,
+	  vapi_install_multi_handler (sim, gpio->base_vapi_id, GPIO_NUM_VAPI_IDS,
 				      gpio_vapi_read, dat);
 	}
     }
@@ -143,7 +144,7 @@ gpio_reset (void *dat)
 
 /* Dump status */
 static void
-gpio_status (void *dat)
+gpio_status (or1ksim *sim, void *dat)
 {
   struct gpio_device *gpio = dat;
 
@@ -164,7 +165,7 @@ gpio_status (void *dat)
 
 /* Wishbone read */
 static uint32_t
-gpio_read32 (oraddr_t addr, void *dat)
+gpio_read32 (or1ksim *sim, oraddr_t addr, void *dat)
 {
   struct gpio_device *gpio = dat;
 
@@ -194,7 +195,7 @@ gpio_read32 (oraddr_t addr, void *dat)
 
 /* Wishbone write */
 static void
-gpio_write32 (oraddr_t addr, uint32_t value, void *dat)
+gpio_write32 (or1ksim *sim,oraddr_t addr, uint32_t value, void *dat)
 {
   struct gpio_device *gpio = dat;
 
@@ -222,7 +223,7 @@ gpio_write32 (oraddr_t addr, uint32_t value, void *dat)
       break;
     case RGPIO_INTS:
       if (gpio->next.ints && !value)
-	clear_interrupt (gpio->irq);
+	clear_interrupt (sim,gpio->irq);
       gpio->next.ints = value;
       break;
     }
@@ -231,7 +232,7 @@ gpio_write32 (oraddr_t addr, uint32_t value, void *dat)
 
 /* Input from "outside world" */
 static void
-gpio_vapi_read (unsigned long id, unsigned long data, void *dat)
+gpio_vapi_read (or1ksim *sim, unsigned long id, unsigned long data, void *dat)
 {
   unsigned which;
   struct gpio_device *gpio = dat;
@@ -262,26 +263,26 @@ gpio_vapi_read (unsigned long id, unsigned long data, void *dat)
       gpio->next.ctrl = data;
       break;
     case GPIO_VAPI_CLOCK:
-      gpio_external_clock (data, gpio);
+      gpio_external_clock (sim, data, gpio);
       break;
     }
 }
 
 /* System Clock. */
 static void
-gpio_clock (void *dat)
+gpio_clock (or1ksim *sim, void *dat)
 {
   struct gpio_device *gpio = dat;
 
   /* Clock the device */
   if (!(gpio->curr.ctrl & RGPIO_CTRL_ECLK))
-    gpio_device_clock (gpio);
+    gpio_device_clock (sim, gpio);
   SCHED_ADD (gpio_clock, dat, 1);
 }
 
 /* External Clock. */
 static void
-gpio_external_clock (unsigned long value, struct gpio_device *gpio)
+gpio_external_clock (or1ksim *sim, unsigned long value, struct gpio_device *gpio)
 {
   int use_external_clock =
     ((gpio->curr.ctrl & RGPIO_CTRL_ECLK) == RGPIO_CTRL_ECLK);
@@ -297,21 +298,21 @@ gpio_external_clock (unsigned long value, struct gpio_device *gpio)
       && (value != negative_edge))
     /* Make sure that in vapi_read, we don't clock the device */
     if (gpio->curr.ctrl & RGPIO_CTRL_ECLK)
-      gpio_device_clock (gpio);
+      gpio_device_clock (sim, gpio);
 }
 
 /* Report an interrupt to the sim */
 static void
-gpio_do_int (void *dat)
+gpio_do_int (or1ksim *sim,void *dat)
 {
   struct gpio_device *gpio = dat;
 
-  report_interrupt (gpio->irq);
+  report_interrupt (sim,gpio->irq);
 }
 
 /* Clock as handld by one device. */
 static void
-gpio_device_clock (struct gpio_device *gpio)
+gpio_device_clock (or1ksim *sim, struct gpio_device *gpio)
 {
   /* Calculate new inputs and outputs */
   gpio->next.in &= ~gpio->next.oe;	/* Only input bits */
@@ -325,7 +326,7 @@ gpio_device_clock (struct gpio_device *gpio)
   if (gpio->next.out != gpio->curr.out)
     {
       if (gpio->base_vapi_id)
-	vapi_send (gpio->base_vapi_id + GPIO_VAPI_DATA, gpio->next.out);
+	vapi_send (sim, gpio->base_vapi_id + GPIO_VAPI_DATA, gpio->next.out);
     }
 
   /* If any inputs changed and interrupt enabled, generate interrupt */
@@ -358,35 +359,35 @@ gpio_device_clock (struct gpio_device *gpio)
 
 /*---------------------------------------------------[ GPIO configuration ]---*/
 static void
-gpio_baseaddr (union param_val val, void *dat)
+gpio_baseaddr (or1ksim *sim,union param_val val, void *dat)
 {
   struct gpio_device *gpio = dat;
   gpio->baseaddr = val.addr_val;
 }
 
 static void
-gpio_irq (union param_val val, void *dat)
+gpio_irq (or1ksim *sim,union param_val val, void *dat)
 {
   struct gpio_device *gpio = dat;
   gpio->irq = val.int_val;
 }
 
 static void
-gpio_base_vapi_id (union param_val val, void *dat)
+gpio_base_vapi_id (or1ksim *sim,union param_val val, void *dat)
 {
   struct gpio_device *gpio = dat;
   gpio->base_vapi_id = val.int_val;
 }
 
 static void
-gpio_enabled (union param_val val, void *dat)
+gpio_enabled (or1ksim *sim,union param_val val, void *dat)
 {
   struct gpio_device *gpio = dat;
   gpio->enabled = val.int_val;
 }
 
 static void *
-gpio_sec_start (void)
+gpio_sec_start (or1ksim *sim)
 {
   struct gpio_device *new = malloc (sizeof (struct gpio_device));
 
@@ -409,7 +410,7 @@ gpio_sec_start (void)
 }
 
 static void
-gpio_sec_end (void *dat)
+gpio_sec_end (or1ksim *sim,void *dat)
 {
   struct gpio_device *gpio = dat;
   struct mem_ops ops;
@@ -432,17 +433,17 @@ gpio_sec_end (void *dat)
   ops.delayw = 2;
 
   /* Register memory range */
-  reg_mem_area (gpio->baseaddr, GPIO_ADDR_SPACE, 0, &ops);
+  reg_mem_area (sim, gpio->baseaddr, GPIO_ADDR_SPACE, 0, &ops);
 
-  reg_sim_reset (gpio_reset, dat);
-  reg_sim_stat (gpio_status, dat);
+  reg_sim_reset (sim, gpio_reset, dat);
+  reg_sim_stat (sim, gpio_status, dat);
 }
 
 void
-reg_gpio_sec (void)
+reg_gpio_sec (or1ksim *sim)
 {
   struct config_section *sec =
-    reg_config_sec ("gpio", gpio_sec_start, gpio_sec_end);
+    reg_config_sec (sim, "gpio", gpio_sec_start, gpio_sec_end);
 
   reg_config_param (sec, "enabled", paramt_int, gpio_enabled);
   reg_config_param (sec, "baseaddr", paramt_addr, gpio_baseaddr);

@@ -57,7 +57,7 @@ static void  file_free (void *data);
 
 /*! Data structure with all the operations for communicating with a file
     channel */
-struct channel_ops  file_channel_ops = {
+const struct channel_ops  file_channel_ops = {
 	.init  = file_init,
 	.open  = file_open,
 	.close = file_close,
@@ -117,7 +117,7 @@ file_open (void *data)
 
   if (files->namein == files->nameout)
     {
-      /* if we have the same name in and out 
+      /* if we have the same name in and out
        * it cannot (logically) be a regular files.
        * so we wont create one
        */

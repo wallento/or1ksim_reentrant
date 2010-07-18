@@ -2,6 +2,7 @@
 
    Copyright (C) 2001 by Erez Volk, erez@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -45,19 +46,15 @@
 #include "sim-cmd.h"
 
 
-/* We keep a copy of all our controllers because we have to export an interface
- * to other peripherals eg. ethernet */
-static struct dma_controller *dmas = NULL;
-
 static unsigned long dma_read_ch_csr (struct dma_channel *channel);
-static void dma_write_ch_csr (struct dma_channel *channel,
+static void dma_write_ch_csr (or1ksim *sim, struct dma_channel *channel,
 			      unsigned long value);
-static void dma_load_descriptor (struct dma_channel *channel);
+static void dma_load_descriptor (or1ksim *sim,struct dma_channel *channel);
 static void dma_init_transfer (struct dma_channel *channel);
-static void dma_channel_terminate_transfer (struct dma_channel *channel,
+static void dma_channel_terminate_transfer (or1ksim *sim,struct dma_channel *channel,
 					    int generate_interrupt);
 
-static void dma_channel_clock (void *dat);
+static void dma_channel_clock (or1ksim *sim,void *dat);
 
 static void masked_increase (oraddr_t * value, unsigned long mask);
 
@@ -66,7 +63,7 @@ static void masked_increase (oraddr_t * value, unsigned long mask);
 
 /* Reset. Initializes all registers to default and places devices in memory address space. */
 static void
-dma_reset (void *dat)
+dma_reset (or1ksim *sim, void *dat)
 {
   struct dma_controller *dma = dat;
   unsigned channel_number;
@@ -92,7 +89,7 @@ dma_reset (void *dat)
 
 /* Print register values on stdout */
 static void
-dma_status (void *dat)
+dma_status (or1ksim *sim, void *dat)
 {
   unsigned j;
   struct dma_controller *dma = dat;
@@ -126,7 +123,7 @@ dma_status (void *dat)
 
 /* Read a register */
 static uint32_t
-dma_read32 (oraddr_t addr, void *dat)
+dma_read32 (or1ksim *sim,oraddr_t addr, void *dat)
 {
   struct dma_controller *dma = dat;
   uint32_t ret;
@@ -144,7 +141,7 @@ dma_read32 (oraddr_t addr, void *dat)
 	  return dma->regs.int_msk_b;
 	case DMA_INT_SRC_A:
 	  if (dma->regs.int_src_a)
-	    clear_interrupt (dma->irq);
+	    clear_interrupt (sim,dma->irq);
 	  ret = dma->regs.int_src_a;
 	  dma->regs.int_src_a = 0;
 	  return ret;
@@ -205,7 +202,7 @@ dma_read_ch_csr (struct dma_channel *channel)
 
 /* Write a register */
 static void
-dma_write32 (oraddr_t addr, uint32_t value, void *dat)
+dma_write32 (or1ksim *sim, oraddr_t addr, uint32_t value, void *dat)
 {
   struct dma_controller *dma = dat;
 
@@ -248,7 +245,7 @@ dma_write32 (oraddr_t addr, uint32_t value, void *dat)
       switch (addr)
 	{
 	case DMA_CSR:
-	  dma_write_ch_csr (&(dma->ch[chno]), value);
+	  dma_write_ch_csr (sim, &(dma->ch[chno]), value);
 	  break;
 	case DMA_CH_SZ:
 	  channel->regs.sz = value;
@@ -280,7 +277,7 @@ dma_write32 (oraddr_t addr, uint32_t value, void *dat)
  * This ensures only the writable bits are modified.
  */
 static void
-dma_write_ch_csr (struct dma_channel *channel, unsigned long value)
+dma_write_ch_csr (or1ksim *sim, struct dma_channel *channel, unsigned long value)
 {
   /* Check if we should *start* a transfer */
   if (!TEST_FLAG (channel->regs.csr, DMA_CH_CSR, CH_EN) &&
@@ -303,7 +300,7 @@ dma_write_ch_csr (struct dma_channel *channel, unsigned long value)
  * One chunk is transferred per clock.
  */
 static void
-dma_channel_clock (void *dat)
+dma_channel_clock (or1ksim *sim,void *dat)
 {
   struct dma_channel *channel = dat;
 
@@ -319,7 +316,7 @@ dma_channel_clock (void *dat)
 	{
 	  SET_FLAG (channel->regs.csr, DMA_CH_CSR, INT_ERR);
 	  channel->controller->regs.int_src_a = channel->channel_mask;
-	  report_interrupt (channel->controller->irq);
+	  report_interrupt (sim,channel->controller->irq);
 	}
 
       return;
@@ -342,7 +339,7 @@ dma_channel_clock (void *dat)
 
       /* If using linked lists, copy the appropriate fields to our registers */
       if (TEST_FLAG (channel->regs.csr, DMA_CH_CSR, USE_ED))
-	dma_load_descriptor (channel);
+	dma_load_descriptor (sim,channel);
       else
 	channel->load_next_descriptor_when_done = 0;
 
@@ -352,13 +349,13 @@ dma_channel_clock (void *dat)
       /* Might need to skip descriptor */
       if (CHANNEL_ND_I (channel))
 	{
-	  dma_channel_terminate_transfer (channel, 0);
+	  dma_channel_terminate_transfer (sim,channel, 0);
 	  return;
 	}
     }
 
   /* Transfer one word */
-  set_direct32 (channel->destination, eval_direct32 (channel->source, 0, 0),
+  set_direct32 (sim,channel->destination, eval_direct32 (sim,channel->source, 0, 0),
 		0, 0);
 
   /* Advance the source and destionation pointers */
@@ -373,14 +370,14 @@ dma_channel_clock (void *dat)
   /* When done with a chunk, check for dma_nd_i */
   if (CHANNEL_ND_I (channel))
     {
-      dma_channel_terminate_transfer (channel, 0);
+      dma_channel_terminate_transfer (sim,channel, 0);
       return;
     }
 
   /* Are we done? */
   if (channel->words_transferred >= channel->total_size)
     {
-      dma_channel_terminate_transfer (channel, 1);
+      dma_channel_terminate_transfer (sim,channel, 1);
       return;
     }
 
@@ -391,10 +388,10 @@ dma_channel_clock (void *dat)
 
 /* Copy relevant valued from linked list descriptor to channel registers */
 static void
-dma_load_descriptor (struct dma_channel *channel)
+dma_load_descriptor (or1ksim *sim,struct dma_channel *channel)
 {
   unsigned long desc_csr =
-    eval_direct32 (channel->regs.desc + DMA_DESC_CSR, 0, 0);
+    eval_direct32 (sim,channel->regs.desc + DMA_DESC_CSR, 0, 0);
 
   channel->load_next_descriptor_when_done =
     !TEST_FLAG (desc_csr, DMA_DESC_CSR, EOL);
@@ -411,12 +408,12 @@ dma_load_descriptor (struct dma_channel *channel)
   SET_FIELD (channel->regs.sz, DMA_CH_SZ, TOT_SZ,
 	     GET_FIELD (desc_csr, DMA_DESC_CSR, TOT_SZ));
 
-  channel->regs.a0 = eval_direct32 (channel->regs.desc + DMA_DESC_ADR0, 0, 0);
-  channel->regs.a1 = eval_direct32 (channel->regs.desc + DMA_DESC_ADR1, 0, 0);
+  channel->regs.a0 = eval_direct32 (sim,channel->regs.desc + DMA_DESC_ADR0, 0, 0);
+  channel->regs.a1 = eval_direct32 (sim,channel->regs.desc + DMA_DESC_ADR1, 0, 0);
 
   channel->current_descriptor = channel->regs.desc;
   channel->regs.desc =
-    eval_direct32 (channel->regs.desc + DMA_DESC_NEXT, 0, 0);
+    eval_direct32 (sim,channel->regs.desc + DMA_DESC_NEXT, 0, 0);
 }
 
 
@@ -442,13 +439,13 @@ dma_init_transfer (struct dma_channel *channel)
 
 /* Take care of transfer termination */
 static void
-dma_channel_terminate_transfer (struct dma_channel *channel,
+dma_channel_terminate_transfer (or1ksim *sim,struct dma_channel *channel,
 				int generate_interrupt)
 {
   /* Might be working in a linked list */
   if (channel->load_next_descriptor_when_done)
     {
-      dma_load_descriptor (channel);
+      dma_load_descriptor (sim,channel);
       dma_init_transfer (channel);
       /* Reschedule */
       SCHED_ADD (dma_channel_clock, channel, 1);
@@ -487,7 +484,7 @@ dma_channel_terminate_transfer (struct dma_channel *channel,
 	{
 	  SET_FLAG (channel->regs.csr, DMA_CH_CSR, INT_DONE);
 	  channel->controller->regs.int_src_a = channel->channel_mask;
-	  report_interrupt (channel->controller->irq);
+	  report_interrupt (sim,channel->controller->irq);
 	}
     }
 }
@@ -536,9 +533,9 @@ check_dma_ack_o (struct dma_channel *channel)
 }
 
 struct dma_channel *
-find_dma_controller_ch (unsigned controller, unsigned channel)
+find_dma_controller_ch (or1ksim *sim, unsigned controller, unsigned channel)
 {
-  struct dma_controller *cur = dmas;
+  struct dma_controller *cur = sim->dmas;
 
   while (cur && controller)
     {
@@ -555,28 +552,28 @@ find_dma_controller_ch (unsigned controller, unsigned channel)
 
 /*----------------------------------------------------[ DMA configuration ]---*/
 static void
-dma_baseaddr (union param_val val, void *dat)
+dma_baseaddr (or1ksim *sim,union param_val val, void *dat)
 {
   struct dma_controller *dma = dat;
   dma->baseaddr = val.addr_val;
 }
 
 static void
-dma_irq (union param_val val, void *dat)
+dma_irq (or1ksim *sim,union param_val val, void *dat)
 {
   struct dma_controller *dma = dat;
   dma->irq = val.int_val;
 }
 
 static void
-dma_vapi_id (union param_val val, void *dat)
+dma_vapi_id (or1ksim *sim,union param_val val, void *dat)
 {
   struct dma_controller *dma = dat;
   dma->vapi_id = val.int_val;
 }
 
 static void
-dma_enabled (union param_val val, void *dat)
+dma_enabled (or1ksim *sim,union param_val val, void *dat)
 {
   struct dma_controller *dma = dat;
   dma->enabled = val.int_val;
@@ -589,7 +586,7 @@ dma_enabled (union param_val val, void *dat)
    ALL parameters are set explicitly to default values.                      */
 /*---------------------------------------------------------------------------*/
 static void *
-dma_sec_start ()
+dma_sec_start (or1ksim *sim)
 {
   struct dma_controller *new = malloc (sizeof (struct dma_controller));
 
@@ -610,7 +607,7 @@ dma_sec_start ()
 }	/* dma_sec_start() */
 
 static void
-dma_sec_end (void *dat)
+dma_sec_end (or1ksim *sim,void *dat)
 {
   struct dma_controller *dma = dat;
   struct dma_controller *cur;
@@ -633,24 +630,24 @@ dma_sec_end (void *dat)
   ops.delayr = 2;
   ops.delayw = 2;
 
-  reg_mem_area (dma->baseaddr, DMA_ADDR_SPACE, 0, &ops);
-  reg_sim_reset (dma_reset, dat);
-  reg_sim_stat (dma_status, dat);
+  reg_mem_area (sim, dma->baseaddr, DMA_ADDR_SPACE, 0, &ops);
+  reg_sim_reset (sim, dma_reset, dat);
+  reg_sim_stat (sim, dma_status, dat);
 
-  if (dmas)
+  if (sim->dmas)
     {
-      for (cur = dmas; cur->next; cur = cur->next);
+      for (cur = sim->dmas; cur->next; cur = cur->next);
       cur->next = dma;
     }
   else
-    dmas = dma;
+    sim->dmas = dma;
 }
 
 void
-reg_dma_sec (void)
+reg_dma_sec (or1ksim *sim)
 {
   struct config_section *sec =
-    reg_config_sec ("dma", dma_sec_start, dma_sec_end);
+    reg_config_sec (sim, "dma", dma_sec_start, dma_sec_end);
 
   reg_config_param (sec, "enabled", paramt_int, dma_enabled);
   reg_config_param (sec, "baseaddr", paramt_addr, dma_baseaddr);

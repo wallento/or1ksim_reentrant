@@ -1,5 +1,6 @@
 /* memory.c -- OpenRISC Custom Unit Compiler, memory optimization and scheduling
  *    Copyright (C) 2002 Marko Mlinar, markom@opencores.org
+ *    Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
  *
  *    This file is part of OpenRISC 1000 Architectural Simulator.
  *
@@ -30,6 +31,7 @@
 #include "sim-config.h"
 #include "cuc.h"
 #include "insn.h"
+#include "siminstance.h"
 
 
 /* Cleans memory & data dependencies */
@@ -43,7 +45,7 @@ void clean_deps (cuc_func *f)
       while (t) {
         dep_list *tmp = t;
         t = t->next;
-        free (tmp);        
+        free (tmp);
       }
       f->bb[b].insn[i].dep = NULL;
     }
@@ -52,11 +54,11 @@ void clean_deps (cuc_func *f)
     while (t) {
       dep_list *tmp = t;
       t = t->next;
-      free (tmp);        
+      free (tmp);
     }
     f->bb[b].mdep = NULL;
   }
-  
+
   f->nmsched = 0;
 }
 
@@ -81,7 +83,7 @@ static int check_memory_conflict (cuc_func *f, cuc_insn *a, cuc_insn *b, int oty
         b = &f->INSN(b->op[1]);
         if (a->opt[1] != b->opt[1] || a->op[1] != b->op[1]
          || a->opt[2] != OPT_CONST || b->opt[2] != OPT_CONST) return 1;
-        
+
         /* Check if they overlap */
         if (a->op[2] >= b->op[2] && a->op[2] < b->op[2] + bw) return 1;
         if (b->op[2] >= a->op[2] && b->op[2] < a->op[2] + aw) return 1;
@@ -120,7 +122,7 @@ void add_memory_dep (cuc_func *f, int otype)
 }
 
 /* Check if they address the same location, so we can join them */
-static int same_transfers (cuc_func *f, int otype)
+static int same_transfers (or1ksim *sim, cuc_func *f, int otype)
 {
   int i, j;
   int modified = 0;
@@ -139,7 +141,7 @@ static int same_transfers (cuc_func *f, int otype)
            || a->opt[2] != OPT_CONST || b->opt[2] != OPT_CONST) goto keep;
 
           //PRINTF ("%i %i, ", a->op[2], b->op[2]);
-          
+
           /* Check if they are the same => do not copy */
           if (a->op[2] == b->op[2]
             && REF_BB(f->msched[i - 1]) == REF_BB(f->msched[i])) {
@@ -157,7 +159,7 @@ static int same_transfers (cuc_func *f, int otype)
                 for (j = 0; j < MAX_OPERANDS; j++)
                   if (f->bb[b].insn[i].opt[j] & OPT_REF && f->bb[b].insn[i].op[j] == t2)
                     f->bb[b].insn[i].op[j] = t1;
-            
+
           } else goto keep;
         } else goto keep;
       } else {
@@ -172,7 +174,7 @@ keep:
 
 /* Check if two consecutive lb[zs] can be joined into lhz and if
    two consecutive lh[zs] can be joined into lwz */
-static int join_transfers (cuc_func *f, int otype)
+static int join_transfers (or1ksim *sim, cuc_func *f, int otype)
 {
   int i, j;
   int modified = 0;
@@ -203,16 +205,16 @@ static int join_transfers (cuc_func *f, int otype)
             dep_list *t1dep = f->INSN(t1).dep;
             int x, p;
             cuc_insn *ii;
-            
+
             cucdebug (2, "Joining %x and %x.\n", t1, t2);
-            if (cuc_debug >= 8) print_cuc_bb (f, "PREJT");
+            if (sim->cuc_debug >= 8) print_cuc_bb (sim, f, "PREJT");
             change_insn_type (&f->INSN(t1), II_NOP);
             change_insn_type (&f->INSN(t2), II_NOP);
             /* We will reuse the memadd before the first load, and add some
                custom code at the end */
-            insert_insns (f, t1, 10);
-            if (cuc_debug > 8) print_cuc_bb (f, "PREJT2");
-            
+            insert_insns (sim, f, t1, 10);
+            if (sim->cuc_debug > 8) print_cuc_bb (sim, f, "PREJT2");
+
             /* Remove all dependencies to second access */
             for (x = 0; x < f->num_bb; x++) {
               int i;
@@ -223,7 +225,7 @@ static int join_transfers (cuc_func *f, int otype)
                   if (d->ref == t2) {
                     d = d->next;
                     *old = d;
-                  } else { 
+                  } else {
                     d = d->next;
                     old = &((*old)->next);
                   }
@@ -264,7 +266,7 @@ static int join_transfers (cuc_func *f, int otype)
                 ii->op[2] = 8; ii->opt[2] = OPT_CONST;
                 ii->opt[3] = OPT_NONE;
               }
-              
+
               ii = &f->bb[REF_BB(t1)].insn[++p];
               change_insn_type (ii, II_AND);
               ii->type = 0;
@@ -302,7 +304,7 @@ static int join_transfers (cuc_func *f, int otype)
             }
 
             modified = 1;
-            
+
             {
               int b, i, j;
               /* Update references */
@@ -317,7 +319,7 @@ static int join_transfers (cuc_func *f, int otype)
                         f->bb[b].insn[i].op[j] = t1 + 9;
                     }
             }
-            if (cuc_debug >= 8) print_cuc_bb (f, "POSTJT");
+            if (sim->cuc_debug >= 8) print_cuc_bb (sim, f, "POSTJT");
           } else goto keep;
         } else goto keep;
       } else {
@@ -341,7 +343,7 @@ int mem_ordering_cmp (cuc_func *f, cuc_insn *a, cuc_insn *b)
     b = &f->INSN(b->op[1]);
     if (a->opt[1] != b->opt[1] || a->op[1] != b->op[1]
      || a->opt[2] != OPT_CONST || b->opt[2] != OPT_CONST) return 0;
-    
+
     /* Order linearly, we can then join them to bursts */
     return a->op[2] < b->op[2];
   } else return 0;
@@ -349,12 +351,12 @@ int mem_ordering_cmp (cuc_func *f, cuc_insn *a, cuc_insn *b)
 
 /* Schedule memory accesses
   0 - exact; 1 - strong; 2 - weak;  3 - none */
-int schedule_memory (cuc_func *f, int otype)
+int schedule_memory (or1ksim *sim, cuc_func *f, int otype)
 {
   int b, i, j;
   int modified = 0;
   f->nmsched = 0;
-  
+
   for (b = 0; b < f->num_bb; b++) {
     cuc_insn *insn = f->bb[b].insn;
     for (i = 0; i < f->bb[b].ninsn; i++)
@@ -367,7 +369,7 @@ int schedule_memory (cuc_func *f, int otype)
   for (i = 0; i < f->nmsched; i++)
     cucdebug (2, "[%x]%x%c ", f->msched[i], f->mtype[i] & MT_WIDTH, (f->mtype[i] & MT_BURST) ? (f->mtype[i] & MT_BURSTE) ? 'E' : 'B' : ' ');
   cucdebug (2, "\n");
-  
+
   /* We can reorder just more loose types
      We assume, that memory accesses are currently in valid (but not neccesserly)
      optimal order */
@@ -386,7 +388,7 @@ int schedule_memory (cuc_func *f, int otype)
           if (!t) best = j; /* no conflicts -> ok */
         }
       }
-      
+
       /* we have to shift instructions up, to maintain valid dependencies
          and make space for best candidate */
 
@@ -397,11 +399,11 @@ int schedule_memory (cuc_func *f, int otype)
       f->INSN(f->msched[i]).type &= ~IT_FLAG1; /* mark scheduled */
     }
   }
-  
+
   for (i = 0; i < f->nmsched; i++)
     cucdebug (2, "[%x]%x%c ", f->msched[i], f->mtype[i] & MT_WIDTH, (f->mtype[i] & MT_BURST) ? (f->mtype[i] & MT_BURSTE) ? 'E' : 'B' : ' ');
   cucdebug (2, "\n");
-  
+
   /* Assign memory types */
   for (i = 0; i < f->nmsched; i++) {
     cuc_insn *a = &f->INSN(f->msched[i]);
@@ -410,15 +412,15 @@ int schedule_memory (cuc_func *f, int otype)
     if (a->type & IT_SIGNED) f->mtype[i] |= MT_SIGNED;
   }
 
-  if (same_transfers (f, otype)) modified = 1;
-  if (join_transfers (f, otype)) modified = 1;
+  if (same_transfers (sim, f, otype)) modified = 1;
+  if (join_transfers (sim, f, otype)) modified = 1;
 
   for (i = 0; i < f->nmsched; i++)
     cucdebug (2, "[%x]%x%c ", f->msched[i], f->mtype[i] & MT_WIDTH, (f->mtype[i] & MT_BURST) ? (f->mtype[i] & MT_BURSTE) ? 'E' : 'B' : ' ');
   cucdebug (2, "\n");
-  if (cuc_debug > 5) print_cuc_bb (f, "AFTER_MEM_REMOVAL");
-  
-  if (config.cuc.enable_bursts) {
+  if (sim->cuc_debug > 5) print_cuc_bb (sim, f, "AFTER_MEM_REMOVAL");
+
+  if (sim->config.cuc.enable_bursts) {
     //PRINTF ("\n");
     for (i = 1; i < f->nmsched; i++) {
       cuc_insn *a = &f->INSN(f->msched[i - 1]);
@@ -434,10 +436,10 @@ int schedule_memory (cuc_func *f, int otype)
         b = &f->INSN(b->op[1]);
         /* Not in usual form? */
         if (a->opt[1] != b->opt[1] || a->op[1] != b->op[1]
-         || a->opt[2] != OPT_CONST || b->opt[2] != OPT_CONST) continue; 
+         || a->opt[2] != OPT_CONST || b->opt[2] != OPT_CONST) continue;
 
         //PRINTF ("%i %i, ", a->op[2], b->op[2]);
-        
+
         /* Check if they touch together */
         if (a->op[2] + aw == b->op[2]
           && REF_BB(f->msched[i - 1]) == REF_BB(f->msched[i])) {
@@ -453,7 +455,7 @@ int schedule_memory (cuc_func *f, int otype)
   for (i = 0; i < f->nmsched; i++)
     cucdebug (2, "[%x]%x%c ", f->msched[i], f->mtype[i] & MT_WIDTH, (f->mtype[i] & MT_BURST) ? (f->mtype[i] & MT_BURSTE) ? 'E' : 'B' : ' ');
   cucdebug (2, "\n");
-  
+
   /* We don't need dependencies in non-memory instructions */
   for (b = 0; b < f->num_bb; b++) {
     cuc_insn *insn = f->bb[b].insn;
@@ -461,7 +463,7 @@ int schedule_memory (cuc_func *f, int otype)
       dispose_list (&insn[i].dep);
   }
 
-  if (cuc_debug > 5) print_cuc_bb (f, "AFTER_MEM_REMOVAL2");
+  if (sim->cuc_debug > 5) print_cuc_bb (sim, f, "AFTER_MEM_REMOVAL2");
   /* Reduce number of dependecies, keeping just direct dependencies, based on memory schedule */
   {
     int lastl[3] = {-1, -1, -1};
@@ -502,7 +504,7 @@ int schedule_memory (cuc_func *f, int otype)
         maxc = last_call;
         last_call = i;
       }
-      
+
       if (maxl > lastl[t]) {
         add_dep (&f->INSN(f->msched[i]).dep, f->msched[maxl]);
         lastl[t] = maxl;
@@ -516,7 +518,7 @@ int schedule_memory (cuc_func *f, int otype)
         lastc[t] = maxc;
       }
       //PRINTF ("%i(%i)> ml %i(%i) ms %i(%i) lastl %i %i lasts %i %i last_load %i last_store %i\n", i, f->msched[i], maxl, f->msched[maxl], maxs, f->msched[maxs], lastl[0], lastl[1], lasts[0], lasts[1], last_load, last_store);
-      
+
       /* What we have to wait to finish this BB? */
       if (i + 1 >= f->nmsched || REF_BB(f->msched[i + 1]) != REF_BB(f->msched[i])) {
         if (last_load > lastl[t]) {

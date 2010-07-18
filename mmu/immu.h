@@ -2,6 +2,7 @@
 
    Copyright (C) 1999 Damjan Lampret, lampret@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -29,6 +30,7 @@
 
 /* Package includes */
 #include "sim-config.h"
+#include "siminstance.h"
 
 struct immu
 {
@@ -48,16 +50,13 @@ struct immu
   int       hitdelay;		/* How much cycles does the hit cost */
 };
 
-#define IADDR_PAGE(addr) ((addr) & immu_state->page_mask)
-
-/* FIXME: Remove the need for this global */
-extern struct immu *immu_state;
+#define IADDR_PAGE(addr) ((addr) & sim->immu_state->page_mask)
 
 /* Prototypes for external use */
 
-extern oraddr_t  immu_translate (oraddr_t virtaddr);
+extern oraddr_t  immu_translate (or1ksim *sim,oraddr_t virtaddr);
 extern oraddr_t  immu_simulate_tlb (oraddr_t virtaddr);
-extern oraddr_t  peek_into_itlb (oraddr_t virtaddr);
-extern void      reg_immu_sec ();
+extern oraddr_t  peek_into_itlb (or1ksim *sim, oraddr_t virtaddr);
+extern void      reg_immu_sec (or1ksim *sim);
 
 #endif /* IMMU__H */

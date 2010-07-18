@@ -2,6 +2,7 @@
 
    Copyright (C) 2001 Chris Ziomkowski, chris@asics.ws
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -27,6 +28,7 @@
 #ifndef DEBUG_UNIT__H
 #define DEBUG_UNIT__H
 
+#include "siminstance.h"
 
 /*! The possible debug unit actions */
 enum debug_unit_action
@@ -38,28 +40,17 @@ enum debug_unit_action
   DebugStoreData        = 5
 };
 
-/*! Enumeration of the various JTAG scan chains. Only those actually
-    implemented are specified. */
-enum debug_scan_chain_ids
-{
-  JTAG_CHAIN_GLOBAL      = 0,
-  JTAG_CHAIN_DEBUG_UNIT  = 1,
-  JTAG_CHAIN_TRACE       = 3,
-  JTAG_CHAIN_DEVELOPMENT = 4,
-  JTAG_CHAIN_WISHBONE    = 5,
-};
-
 /* Function prototypes for external use */
-extern void  du_reset ();
-extern void  set_stall_state (int state);
-extern int   check_debug_unit (enum debug_unit_action  action,
+extern void  du_reset (or1ksim *sim);
+extern void  set_stall_state (or1ksim *sim, int state);
+extern int   check_debug_unit (or1ksim *sim,enum debug_unit_action  action,
 			       unsigned long           udata);
-extern int   debug_get_register (oraddr_t  address,
+extern int   debug_get_register (or1ksim *sim,oraddr_t  address,
 				 uorreg_t *data);
-extern int   debug_set_register (oraddr_t  address,
+extern int   debug_set_register (or1ksim *sim,oraddr_t  address,
 				 uorreg_t  data);
-extern int   debug_set_chain (enum debug_scan_chain_ids  chain);
-extern int   debug_ignore_exception (unsigned long except);
-extern void  reg_debug_sec ();
+extern int   debug_set_chain (or1ksim *sim, enum debug_scan_chain_ids  chain);
+extern int   debug_ignore_exception (or1ksim *sim,unsigned long except);
+extern void  reg_debug_sec (or1ksim *sim);
 
 #endif	/*  DEBUG_UNIT__H */

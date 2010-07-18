@@ -2,6 +2,7 @@
 
    Copyright (C) 1999 Damjan Lampret, lampret@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -40,24 +41,24 @@
    @param[in] addr  The address for the breakpoint                           */
 /*---------------------------------------------------------------------------*/
 void
-set_insnbrkpoint (oraddr_t addr)
+set_insnbrkpoint (or1ksim *sim, oraddr_t addr)
 {
   addr &= ~ADDR_C (3);		/* 32-bit aligned */
 
-  if (!verify_memoryarea (addr))
+  if (!verify_memoryarea (sim, addr))
     {
       PRINTF
 	("WARNING: This breakpoint is out of the simulated memory range.\n");
     }
 
-  if (has_breakpoint (addr))
+  if (has_breakpoint (sim, addr))
     {
-      remove_breakpoint (addr);
+      remove_breakpoint (sim, addr);
       PRINTF ("\nBreakpoint at 0x%" PRIxADDR " cleared.\n", addr);
     }
   else
     {
-      add_breakpoint (addr);
+      add_breakpoint (sim, addr);
       PRINTF ("\nBreakpoint at 0x%" PRIxADDR " set.\n", addr);
     }
 

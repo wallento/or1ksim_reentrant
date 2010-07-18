@@ -2,6 +2,7 @@
 
    Copyright (C) 1999 Damjan Lampret, lampret@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -43,45 +44,41 @@
 
 extern void op_join_mem_cycles(void);
 
-
-
-int except_pending = 0;
-
 /* Asserts OR1K exception. */
 /* WARNING: Don't expect except_handle to return.  Sometimes it _may_ return at
  * other times it may not. */
 void
-except_handle (oraddr_t except, oraddr_t ea)
+except_handle (or1ksim *sim,oraddr_t except, oraddr_t ea)
 {
   oraddr_t except_vector;
 
-  if (debug_ignore_exception (except))
+  if (debug_ignore_exception (sim,except))
     return;
 
 #if !(DYNAMIC_EXECUTION)
   /* In the dynamic recompiler, this function never returns, so this is not
    * needed.  Ofcourse we could set it anyway, but then all code that checks
    * this variable would break, since it is never reset */
-  except_pending = 1;
+  sim->except_pending = 1;
 #endif
 
   except_vector =
-    except + (cpu_state.sprs[SPR_SR] & SPR_SR_EPH ? 0xf0000000 : 0x00000000);
+    except + (sim->cpu_state.sprs[SPR_SR] & SPR_SR_EPH ? 0xf0000000 : 0x00000000);
 
 #if !(DYNAMIC_EXECUTION)
-  pcnext = except_vector;
+  sim->pcnext = except_vector;
 #endif
 
-  cpu_state.sprs[SPR_EEAR_BASE] = ea;
-  cpu_state.sprs[SPR_ESR_BASE] = cpu_state.sprs[SPR_SR];
+  sim->cpu_state.sprs[SPR_EEAR_BASE] = ea;
+  sim->cpu_state.sprs[SPR_ESR_BASE] = sim->cpu_state.sprs[SPR_SR];
 
-  cpu_state.sprs[SPR_SR] &= ~SPR_SR_OVE;	/* Disable overflow flag exception. */
+  sim->cpu_state.sprs[SPR_SR] &= ~SPR_SR_OVE;	/* Disable overflow flag exception. */
 
-  cpu_state.sprs[SPR_SR] |= SPR_SR_SM;	/* SUPV mode */
-  cpu_state.sprs[SPR_SR] &= ~(SPR_SR_IEE | SPR_SR_TEE);	/* Disable interrupts. */
+  sim->cpu_state.sprs[SPR_SR] |= SPR_SR_SM;	/* SUPV mode */
+  sim->cpu_state.sprs[SPR_SR] &= ~(SPR_SR_IEE | SPR_SR_TEE);	/* Disable interrupts. */
 
   /* Address translation is always disabled when starting exception. */
-  cpu_state.sprs[SPR_SR] &= ~SPR_SR_DME;
+  sim->cpu_state.sprs[SPR_SR] &= ~SPR_SR_DME;
 
 #if DYNAMIC_EXECUTION
   /* If we were called from do_scheduler and there were more jobs scheduled to
@@ -100,7 +97,7 @@ except_handle (oraddr_t except, oraddr_t ea)
       /* EPCR is loaded with address of instruction that caused the exception */
     case EXCEPT_ITLBMISS:
     case EXCEPT_IPF:
-      cpu_state.sprs[SPR_EPCR_BASE] = ea - (cpu_state.delay_insn ? 4 : 0);
+      sim->cpu_state.sprs[SPR_EPCR_BASE] = ea - (sim->cpu_state.delay_insn ? 4 : 0);
 #if DYNAMIC_EXECUTION
       op_join_mem_cycles ();
 #endif
@@ -119,26 +116,26 @@ except_handle (oraddr_t except, oraddr_t ea)
        * a chance to run, therefore run it now */
       run_sched_out_of_line ();
 #endif
-      cpu_state.sprs[SPR_EPCR_BASE] =
-	cpu_state.pc - (cpu_state.delay_insn ? 4 : 0);
+      sim->cpu_state.sprs[SPR_EPCR_BASE] =
+	sim->cpu_state.pc - (sim->cpu_state.delay_insn ? 4 : 0);
       break;
       /* EPCR is loaded with address of next not-yet-executed instruction */
     case EXCEPT_SYSCALL:
-      cpu_state.sprs[SPR_EPCR_BASE] =
-	(cpu_state.pc + 4) - (cpu_state.delay_insn ? 4 : 0);
+      sim->cpu_state.sprs[SPR_EPCR_BASE] =
+	(sim->cpu_state.pc + 4) - (sim->cpu_state.delay_insn ? 4 : 0);
       break;
       /* These exceptions happen AFTER (or before) an instruction has been
        * simulated, therefore the pc already points to the *next* instruction */
     case EXCEPT_TICK:
     case EXCEPT_INT:
-      cpu_state.sprs[SPR_EPCR_BASE] =
-	cpu_state.pc - (cpu_state.delay_insn ? 4 : 0);
+      sim->cpu_state.sprs[SPR_EPCR_BASE] =
+	sim->cpu_state.pc - (sim->cpu_state.delay_insn ? 4 : 0);
 #if !(DYNAMIC_EXECUTION)
       /* If we don't update the pc now, then it will only happen *after* the next
        * instruction (There would be serious problems if the next instruction just
        * happens to be a branch), when it should happen NOW. */
-      cpu_state.pc = pcnext;
-      pcnext += 4;
+      sim->cpu_state.pc = sim->pcnext;
+      sim->pcnext += 4;
 #endif
       break;
     }
@@ -146,14 +143,14 @@ except_handle (oraddr_t except, oraddr_t ea)
   /* Address trnaslation is here because run_sched_out_of_line calls
    * eval_insn_direct which checks out the immu for the address translation but
    * if it would be disabled above then there would be not much point... */
-  cpu_state.sprs[SPR_SR] &= ~SPR_SR_IME;
+  sim->cpu_state.sprs[SPR_SR] &= ~SPR_SR_IME;
 
   /* Complex/simple execution strictly don't need this because of the
    * next_delay_insn thingy but in the dynamic execution modell that doesn't
-   * exist and thus cpu_state.delay_insn would stick in the exception handler
+   * exist and thus sim->cpu_state.delay_insn would stick in the exception handler
    * causeing grief if the first instruction of the exception handler is also in
    * the delay slot of the previous instruction */
-  cpu_state.delay_insn = 0;
+  sim->cpu_state.delay_insn = 0;
 
 #if DYNAMIC_EXECUTION
   do_jump (except_vector);

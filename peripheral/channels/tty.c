@@ -83,7 +83,7 @@ static void *tty_init (const char *input);
 static int   tty_open (void *data);
 
 /*! Global data structure representing the operations on a TTY channel */
-struct channel_ops tty_channel_ops = {
+const struct channel_ops tty_channel_ops = {
 	.init  = tty_init,
 	.open  = tty_open,
 	.close = generic_close,
@@ -185,7 +185,7 @@ tty_init (const char *input)
   /* Enable the receiver and set local mode... */
 
   /* cfmakeraw(&options);
-   * 
+   *
    * cygwin lacks cfmakeraw(), just do it explicitly
    */
   options.c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP

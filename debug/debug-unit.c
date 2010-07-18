@@ -2,6 +2,7 @@
 
    Copyright (C) 2001 Chris Ziomkowski, chris@asics.ws
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
   
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
   
@@ -66,32 +67,15 @@
 #define RISCOP_STALL  0x00000001	/*!< Stall processor */
 #define RISCOP_RESET  0x00000002	/*!< Reset processor (clears stall) */
 
-/*! The various addresses in the development interface scan chain
-    (JTAG_CHAIN_DEVELOPMENT). Only documents the ones we actually have*/
-enum development_interface_address_space
-{
-  DEVELOPINT_RISCOP  =  4,
-  DEVELOPINT_MAX     = 27,
-};
-
-/*! Data structure holding debug registers and their bits */
-unsigned long  development[DEVELOPINT_MAX + 1];
-
-/*! The current scan chain being accessed */
-static enum debug_scan_chain_ids current_scan_chain = JTAG_CHAIN_GLOBAL;
-
-/*! External STALL signal to debug interface */
-static int in_reset = 0;
-
 /*! Forward declaration of static functions */
-static int calculate_watchpoints (enum debug_unit_action action,
+static int calculate_watchpoints (or1ksim *sim, enum debug_unit_action action,
 				  unsigned long          udata);
-static int get_devint_reg (unsigned int   addr,
+static int get_devint_reg (or1ksim *sim, unsigned int   addr,
 			   unsigned long *data);
-static int set_devint_reg (unsigned int   addr,
+static int set_devint_reg (or1ksim *sim, unsigned int   addr,
 			   unsigned long  data);
-static int debug_set_mem (oraddr_t address, uorreg_t data);
-static int debug_get_mem (oraddr_t address, uorreg_t * data);
+static int debug_set_mem (or1ksim *sim, oraddr_t address, uorreg_t data);
+static int debug_get_mem (or1ksim *sim,oraddr_t address, uorreg_t * data);
 
 
 
@@ -101,16 +85,16 @@ static int debug_get_mem (oraddr_t address, uorreg_t * data);
    Clear all development inteface registers                                  */
 /*---------------------------------------------------------------------------*/
 void
-du_reset ()
+du_reset (or1ksim *sim)
 {
   int  i;
-  
+
   for (i = 0; i <= DEVELOPINT_MAX; i++)
     {
-      development[i] = 0;
+      sim->development[i] = 0;
     }
 
-  set_stall_state (0);
+  set_stall_state (sim, 0);
 
 }	/* du_reset () */
 
@@ -121,7 +105,7 @@ du_reset ()
    @param[in] state  If non-zero stall the processor.                        */
 /*---------------------------------------------------------------------------*/
 void
-set_stall_state (int state)
+set_stall_state (or1ksim *sim, int state)
 {
 #if DYNAMIC_EXECUTION
   if (state)
@@ -131,16 +115,16 @@ set_stall_state (int state)
     }
 #endif
 
-  development[DEVELOPINT_RISCOP] &= ~RISCOP_STALL;
-  development[DEVELOPINT_RISCOP] |= state ? RISCOP_STALL : 0;
+  sim->development[DEVELOPINT_RISCOP] &= ~RISCOP_STALL;
+  sim->development[DEVELOPINT_RISCOP] |= state ? RISCOP_STALL : 0;
 
-  runtime.cpu.stalled             = state;
+  sim->runtime.cpu.stalled             = state;
 
   /* If we unstall, any changed NPC becomes valid again */
 
-  if (!runtime.cpu.stalled)
+  if (!sim->runtime.cpu.stalled)
     {
-      cpu_state.npc_not_valid = 0;
+      sim->cpu_state.npc_not_valid = 0;
     }
 }	/* set_stall_state () */
 
@@ -157,19 +141,19 @@ set_stall_state (int state)
    @return  Non-zero if there was a breakpoint, 0 otherwise.                 */
 /*---------------------------------------------------------------------------*/
 int
-check_debug_unit (enum debug_unit_action  action,
+check_debug_unit (or1ksim *sim,enum debug_unit_action  action,
 		  unsigned long           udata)
 {
   /* Do not stop if we have debug module disabled or during reset */
-  if (!config.debug.enabled || in_reset)
+  if (!sim->config.debug.enabled || sim->in_reset)
     {
       return 0;
     }
 
   /* is any watchpoint enabled to generate a break or count? If not, ignore */
-  if (cpu_state.sprs[SPR_DMR2] & (SPR_DMR2_WGB | SPR_DMR2_AWTC))
+  if (sim->cpu_state.sprs[SPR_DMR2] & (SPR_DMR2_WGB | SPR_DMR2_AWTC))
     {
-      return  calculate_watchpoints (action, udata);
+      return  calculate_watchpoints (sim, action, udata);
     }
 
   return 0;			/* No breakpoint */
@@ -188,7 +172,7 @@ check_debug_unit (enum debug_unit_action  action,
    @return  Non-zero if this should generate a breakpoint                    */
 /*---------------------------------------------------------------------------*/
 static int
-calculate_watchpoints (enum debug_unit_action  action,
+calculate_watchpoints (or1ksim *sim, enum debug_unit_action  action,
 		       unsigned long           udata)
 {
   int  i;
@@ -215,7 +199,7 @@ calculate_watchpoints (enum debug_unit_action  action,
 
   for (i = 0; i < MAX_MATCHPOINTS; i++)
     {
-      unsigned long  dcr    = cpu_state.sprs[SPR_DCR (i)];
+      unsigned long  dcr    = sim->cpu_state.sprs[SPR_DCR (i)];
       unsigned char  dcr_dp = dcr & SPR_DCR_DP;
       unsigned char  dcr_cc;
       unsigned char  dcr_sc;
@@ -278,7 +262,7 @@ calculate_watchpoints (enum debug_unit_action  action,
       if (SPR_DCR_SC == dcr_sc)
 	{
 	  long int sop1 = udata;
-	  long int sop2 = cpu_state.sprs[SPR_DVR (i)];
+	  long int sop2 = sim->cpu_state.sprs[SPR_DVR (i)];
 
 	  switch (dcr & SPR_DCR_CC)
 	    {
@@ -317,7 +301,7 @@ calculate_watchpoints (enum debug_unit_action  action,
       else
 	{
 	  unsigned long int op1 = udata;
-	  unsigned long int op2 = cpu_state.sprs[SPR_DVR (i)];
+	  unsigned long int op2 = sim->cpu_state.sprs[SPR_DVR (i)];
 
 	  switch (dcr & SPR_DCR_CC)
 	    {
@@ -383,7 +367,7 @@ calculate_watchpoints (enum debug_unit_action  action,
 
   assert (MAX_MATCHPOINTS == 8);
 
-  dmr1 = cpu_state.sprs[SPR_DMR1];
+  dmr1 = sim->cpu_state.sprs[SPR_DMR1];
 
   switch (dmr1 & SPR_DMR1_CW0)
     {
@@ -541,15 +525,15 @@ calculate_watchpoints (enum debug_unit_action  action,
      watchpoints, which depend on the counters, also increment the
      counters. Since they cannot yet be set, they are not tested here. */
 
-  dmr2             = cpu_state.sprs[SPR_DMR2];
+  dmr2             = sim->cpu_state.sprs[SPR_DMR2];
 
   counter0_enabled = SPR_DMR2_WCE0 == (dmr2 & SPR_DMR2_WCE0);
   counter1_enabled = SPR_DMR2_WCE1 == (dmr2 & SPR_DMR2_WCE1);
 
   if (counter0_enabled || counter1_enabled)
     {
-      short int  counter0 = cpu_state.sprs[SPR_DWCR0] & SPR_DWCR_COUNT;
-      short int  counter1 = cpu_state.sprs[SPR_DWCR1] & SPR_DWCR_COUNT;
+      short int  counter0 = sim->cpu_state.sprs[SPR_DWCR0] & SPR_DWCR_COUNT;
+      short int  counter1 = sim->cpu_state.sprs[SPR_DWCR1] & SPR_DWCR_COUNT;
 
       for (i = 0; i < MAX_WATCHPOINTS - 2; i++)
 	{
@@ -571,10 +555,10 @@ calculate_watchpoints (enum debug_unit_action  action,
 	    }
 	}
 
-      cpu_state.sprs[SPR_DWCR0] &= ~SPR_DWCR_COUNT;
-      cpu_state.sprs[SPR_DWCR0] |= counter0;
-      cpu_state.sprs[SPR_DWCR1] &= ~SPR_DWCR_COUNT;
-      cpu_state.sprs[SPR_DWCR1] |= counter1;
+      sim->cpu_state.sprs[SPR_DWCR0] &= ~SPR_DWCR_COUNT;
+      sim->cpu_state.sprs[SPR_DWCR0] |= counter0;
+      sim->cpu_state.sprs[SPR_DWCR1] &= ~SPR_DWCR_COUNT;
+      sim->cpu_state.sprs[SPR_DWCR1] |= counter1;
     }
 
   /* Sort out the last two matchpoints, which depend on counters
@@ -587,11 +571,11 @@ calculate_watchpoints (enum debug_unit_action  action,
      watchpoint 7 and watchpoint 9 chains with watchpoint 8. */
 
   counter0_matched =
-    ((cpu_state.sprs[SPR_DWCR0] & SPR_DWCR_COUNT) ==
-     ((cpu_state.sprs[SPR_DWCR0] & SPR_DWCR_MATCH) >> SPR_DWCR_MATCH_OFF));
+    ((sim->cpu_state.sprs[SPR_DWCR0] & SPR_DWCR_COUNT) ==
+     ((sim->cpu_state.sprs[SPR_DWCR0] & SPR_DWCR_MATCH) >> SPR_DWCR_MATCH_OFF));
   counter1_matched =
-    ((cpu_state.sprs[SPR_DWCR1] & SPR_DWCR_COUNT) ==
-     ((cpu_state.sprs[SPR_DWCR1] & SPR_DWCR_MATCH) >> SPR_DWCR_MATCH_OFF));
+    ((sim->cpu_state.sprs[SPR_DWCR1] & SPR_DWCR_COUNT) ==
+     ((sim->cpu_state.sprs[SPR_DWCR1] & SPR_DWCR_MATCH) >> SPR_DWCR_MATCH_OFF));
 
   switch (dmr1 & SPR_DMR1_CW8)
     {
@@ -648,7 +632,7 @@ calculate_watchpoints (enum debug_unit_action  action,
 	}
     }
 
-  cpu_state.sprs[SPR_DMR2] = dmr2;
+  sim->cpu_state.sprs[SPR_DMR2] = dmr2;
 
   return breakpoint_found;
 
@@ -666,15 +650,15 @@ calculate_watchpoints (enum debug_unit_action  action,
    @return  An error code (including ERR_NONE) if there is no error          */
 /*---------------------------------------------------------------------------*/
 int
-debug_get_register (oraddr_t  address,
+debug_get_register (or1ksim *sim,oraddr_t  address,
 		    uorreg_t *data)
 {
   int  err = ERR_NONE;
 
-  switch (current_scan_chain)
+  switch (sim->current_scan_chain)
     {
     case JTAG_CHAIN_DEBUG_UNIT:
-      *data = mfspr (address);
+      *data = mfspr (sim,address);
       break;
 
     case JTAG_CHAIN_TRACE:
@@ -682,11 +666,11 @@ debug_get_register (oraddr_t  address,
       break;
 
     case JTAG_CHAIN_DEVELOPMENT:
-      err = get_devint_reg (address, (unsigned long *)data);
+      err = get_devint_reg (sim, address, (unsigned long *)data);
       break;
 
     case JTAG_CHAIN_WISHBONE:
-      err = debug_get_mem (address, data);
+      err = debug_get_mem (sim,address, data);
       break;
 
     default:
@@ -709,15 +693,15 @@ debug_get_register (oraddr_t  address,
    @return  An error code (including ERR_NONE) if there is no error          */
 /*---------------------------------------------------------------------------*/
 int
-debug_set_register (oraddr_t  address,
+debug_set_register (or1ksim *sim,oraddr_t  address,
 		    uorreg_t  data)
 {
   int  err = ERR_NONE;
 
-  switch (current_scan_chain)
+  switch (sim->current_scan_chain)
     {
     case JTAG_CHAIN_DEBUG_UNIT:
-      mtspr (address, data);
+      mtspr (sim,address, data);
       break;
 
     case JTAG_CHAIN_TRACE:
@@ -725,11 +709,11 @@ debug_set_register (oraddr_t  address,
       break;
 
     case JTAG_CHAIN_DEVELOPMENT:
-      err = set_devint_reg (address, data);
+      err = set_devint_reg (sim, address, data);
       break;
 
     case JTAG_CHAIN_WISHBONE:
-      err = debug_set_mem (address, data);
+      err = debug_set_mem (sim, address, data);
       break;
 
     default:
@@ -751,20 +735,20 @@ debug_set_register (oraddr_t  address,
    @return  An error code (including ERR_NONE) if there is no error          */
 /*---------------------------------------------------------------------------*/
 int
-debug_set_chain (enum debug_scan_chain_ids  chain)
+debug_set_chain (or1ksim *sim, enum debug_scan_chain_ids  chain)
 {
   switch (chain)
     {
     case JTAG_CHAIN_DEBUG_UNIT:
     case JTAG_CHAIN_DEVELOPMENT:
     case JTAG_CHAIN_WISHBONE:
-      current_scan_chain = chain;
+      sim->current_scan_chain = chain;
       break;
 
     case JTAG_CHAIN_TRACE:
       return  JTAG_PROXY_INVALID_CHAIN;	/* Not yet implemented */
 
-    default:			
+    default:
       return  JTAG_PROXY_INVALID_CHAIN;	/* All other chains not implemented */
     }
 
@@ -784,14 +768,14 @@ debug_set_chain (enum debug_scan_chain_ids  chain)
    @return  An error code (including ERR_NONE) if there is no error          */
 /*---------------------------------------------------------------------------*/
 static int
-get_devint_reg (enum development_interface_address_space  address,
+get_devint_reg (or1ksim *sim, enum development_interface_address_space  address,
 		unsigned long                            *data)
 {
   int  err = ERR_NONE;
 
   if (address <= DEVELOPINT_MAX)
     {
-      *data = development[address];
+      *data = sim->development[address];
     }
   else
     {
@@ -815,29 +799,29 @@ get_devint_reg (enum development_interface_address_space  address,
    @return  An error code (including ERR_NONE) if there is no error          */
 /*---------------------------------------------------------------------------*/
 static int
-set_devint_reg (enum development_interface_address_space  address,
+set_devint_reg (or1ksim *sim, enum development_interface_address_space  address,
 		unsigned long                             data)
 {
   int err =  ERR_NONE;
 
   if (DEVELOPINT_RISCOP == address)
     {
-      int old_value = (development[DEVELOPINT_RISCOP] & RISCOP_RESET) != 0;
+      int old_value = (sim->development[DEVELOPINT_RISCOP] & RISCOP_RESET) != 0;
 
-      development[DEVELOPINT_RISCOP] = data;
-      in_reset                       = ((data & RISCOP_RESET) != 0);
+      sim->development[DEVELOPINT_RISCOP] = data;
+      sim->in_reset                       = ((data & RISCOP_RESET) != 0);
 
       /* Reset the cpu on the negative edge of RESET */
-      if (old_value && !in_reset)
+      if (old_value && !sim->in_reset)
 	{
-	  sim_reset ();		/* Reset all units */
+	  sim_reset (sim);		/* Reset all units */
 	}
 
-      set_stall_state ((development[DEVELOPINT_RISCOP] & RISCOP_STALL) != 0);
+      set_stall_state (sim, (sim->development[DEVELOPINT_RISCOP] & RISCOP_STALL) != 0);
     }
   else if (address <= DEVELOPINT_MAX)
     {
-      development[address] = data;
+      sim->development[address] = data;
     }
   else
     {
@@ -858,18 +842,18 @@ set_devint_reg (enum development_interface_address_space  address,
    @return  An error code (including ERR_NONE) if there is no error          */
 /*---------------------------------------------------------------------------*/
 static int
-debug_get_mem (oraddr_t  address,
+debug_get_mem (or1ksim *sim,oraddr_t  address,
 	       uorreg_t *data)
 {
   int  err = ERR_NONE;
 
-  if (!verify_memoryarea (address))
+  if (!verify_memoryarea (sim, address))
     {
     err = JTAG_PROXY_INVALID_ADDRESS;
     }
   else
     {
-      *data = eval_direct32 (address, 0, 0);
+      *data = eval_direct32 (sim,address, 0, 0);
     }
 
   return  err;
@@ -886,12 +870,12 @@ debug_get_mem (oraddr_t  address,
    @return  An error code (including ERR_NONE) if there is no error          */
 /*---------------------------------------------------------------------------*/
 static int
-debug_set_mem (oraddr_t  address,
+debug_set_mem (or1ksim *sim, oraddr_t  address,
 	       uint32_t  data)
 {
   int  err = ERR_NONE;
 
-  if (!verify_memoryarea (address))
+  if (!verify_memoryarea (sim, address))
     {
       err = JTAG_PROXY_INVALID_ADDRESS;
     }
@@ -899,7 +883,7 @@ debug_set_mem (oraddr_t  address,
     {
       // circumvent the read-only check usually done for mem accesses
       // data is in host order, because that's what set_direct32 needs
-      set_program32 (address, data);
+      set_program32 (sim, address, data);
     }
 
   return  err;
@@ -915,10 +899,10 @@ debug_set_mem (oraddr_t  address,
    @return  Non-zero if the exception should be ignored                      */
 /*---------------------------------------------------------------------------*/
 int
-debug_ignore_exception (unsigned long  except)
+debug_ignore_exception (or1ksim *sim,unsigned long  except)
 {
   int           result = 0;
-  unsigned long dsr    = cpu_state.sprs[SPR_DSR];
+  unsigned long dsr    = sim->cpu_state.sprs[SPR_DSR];
 
   switch (except)
     {
@@ -939,13 +923,13 @@ debug_ignore_exception (unsigned long  except)
     default:                                              break;
     }
 
-  cpu_state.sprs[SPR_DRR] |= result;
-  set_stall_state (result != 0);
+  sim->cpu_state.sprs[SPR_DRR] |= result;
+  set_stall_state (sim, result != 0);
 
   /* Notify RSP if enabled. TODO: Should we actually notify ALL exceptions,
      not just those maked in the DSR? */
 
-  if (config.debug.rsp_enabled && (0 != result))
+  if (sim->config.debug.rsp_enabled && (0 != result))
     {
       rsp_exception (except);
     }
@@ -964,18 +948,18 @@ debug_ignore_exception (unsigned long  except)
    @param[in] dat  The config data structure (not used here)                 */
 /*---------------------------------------------------------------------------*/
 static void
-debug_enabled (union param_val val, void *dat)
+debug_enabled (or1ksim *sim,union param_val val, void *dat)
 {
   if (val.int_val)
     {
-      cpu_state.sprs[SPR_UPR] |= SPR_UPR_DUP;
+      sim->cpu_state.sprs[SPR_UPR] |= SPR_UPR_DUP;
     }
   else
     {
-      cpu_state.sprs[SPR_UPR] &= ~SPR_UPR_DUP;
+      sim->cpu_state.sprs[SPR_UPR] &= ~SPR_UPR_DUP;
     }
 
-  config.debug.enabled = val.int_val;
+  sim->config.debug.enabled = val.int_val;
 
 }	/* debug_enabled() */
 
@@ -991,15 +975,15 @@ debug_enabled (union param_val val, void *dat)
    @param[in] dat  The config data structure (not used here)                 */
 /*---------------------------------------------------------------------------*/
 static void
-debug_gdb_enabled (union param_val val, void *dat)
+debug_gdb_enabled (or1ksim *sim,union param_val val, void *dat)
 {
-  config.debug.gdb_enabled = val.int_val;
+  sim->config.debug.gdb_enabled = val.int_val;
 
-  if (config.debug.gdb_enabled && config.debug.rsp_enabled)
+  if (sim->config.debug.gdb_enabled && sim->config.debug.rsp_enabled)
     {
       fprintf (stderr, "WARNING. Cannot specify both legacy and RSP GDB "
 	       "interfaces: legacy interface ignored\n");
-      config.debug.gdb_enabled = 0;
+      sim->config.debug.gdb_enabled = 0;
     }
 }	/* debug_gdb_enabled () */
 
@@ -1014,15 +998,15 @@ debug_gdb_enabled (union param_val val, void *dat)
    @param[in] dat  The config data structure (not used here)                 */
 /*---------------------------------------------------------------------------*/
 static void
-debug_rsp_enabled (union param_val val, void *dat)
+debug_rsp_enabled (or1ksim *sim,union param_val val, void *dat)
 {
-  config.debug.rsp_enabled = val.int_val;
+  sim->config.debug.rsp_enabled = val.int_val;
 
-  if (config.debug.gdb_enabled && config.debug.rsp_enabled)
+  if (sim->config.debug.gdb_enabled && sim->config.debug.rsp_enabled)
     {
       fprintf (stderr, "WARNING. Cannot specify both legacy and RSP GDB "
 	       "interfaces: legacy interface ignored\n");
-      config.debug.gdb_enabled = 0;
+      sim->config.debug.gdb_enabled = 0;
     }
 }	/* debug_rsp_enabled () */
 
@@ -1041,7 +1025,7 @@ debug_rsp_enabled (union param_val val, void *dat)
    @param[in] dat  The config data structure (not used here)                 */
 /*---------------------------------------------------------------------------*/
 static void
-debug_server_port (union param_val val, void *dat)
+debug_server_port (or1ksim *sim,union param_val val, void *dat)
 {
   if ((val.int_val < 0) || (val.int_val > 65535))
     {
@@ -1049,7 +1033,7 @@ debug_server_port (union param_val val, void *dat)
     }
   else
     {
-      config.debug.server_port = val.int_val;
+      sim->config.debug.server_port = val.int_val;
     }
 }	/* debug_server_port() */
 
@@ -1068,7 +1052,7 @@ debug_server_port (union param_val val, void *dat)
    @param[in] dat  The config data structure (not used here)                 */
 /*---------------------------------------------------------------------------*/
 static void
-debug_rsp_port (union param_val val, void *dat)
+debug_rsp_port (or1ksim *sim,union param_val val, void *dat)
 {
   if ((val.int_val < 0) || (val.int_val > 65535))
     {
@@ -1076,7 +1060,7 @@ debug_rsp_port (union param_val val, void *dat)
     }
   else
     {
-      config.debug.rsp_port = val.int_val;
+      sim->config.debug.rsp_port = val.int_val;
     }
 }	/* debug_rsp_port() */
 
@@ -1088,9 +1072,9 @@ debug_rsp_port (union param_val val, void *dat)
    @param[in] dat  The config data structure (not used here)                 */
 /*---------------------------------------------------------------------------*/
 static void
-debug_vapi_id (union param_val val, void *dat)
+debug_vapi_id (or1ksim *sim,union param_val val, void *dat)
 {
-  config.debug.vapi_id = val.int_val;
+  sim->config.debug.vapi_id = val.int_val;
 
 }	/* debug_vapi_id () */
 
@@ -1099,9 +1083,9 @@ debug_vapi_id (union param_val val, void *dat)
 /*!Register the configuration functions for the debug unit                   */
 /*---------------------------------------------------------------------------*/
 void
-reg_debug_sec ()
+reg_debug_sec (or1ksim *sim)
 {
-  struct config_section *sec = reg_config_sec ("debug", NULL, NULL);
+  struct config_section *sec = reg_config_sec (sim, "debug", NULL, NULL);
 
   reg_config_param (sec, "enabled",     paramt_int, debug_enabled);
   reg_config_param (sec, "gdb_enabled", paramt_int, debug_gdb_enabled);

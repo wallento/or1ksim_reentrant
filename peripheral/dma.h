@@ -2,6 +2,7 @@
 
    Copyright (C) 2001 by Erez Volk, erez@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -105,10 +106,10 @@ void clear_dma_req_i (struct dma_channel *channel);
 void set_dma_nd_i (struct dma_channel *channel);
 void clear_dma_nd_i (struct dma_channel *channel);
 unsigned check_dma_ack_o (struct dma_channel *channel);
-struct dma_channel *find_dma_controller_ch (unsigned controller,
+struct dma_channel *find_dma_controller_ch (or1ksim *sim, unsigned controller,
 					    unsigned channel);
 
 /* Prototype for external use */
-extern void  reg_dma_sec ();
+extern void  reg_dma_sec (or1ksim *sim);
 
 #endif	/* DMA__H */

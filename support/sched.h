@@ -1,8 +1,9 @@
 /* sched.h -- Abstract entities header file handling job scheduler
 
    Copyright (C) 2001 Marko Mlinar, markom@opencores.org
-   Copyright (C) 2005 György `nog' Jeney, nog@sdf.lonestar.org
+   Copyright (C) 2005 GyÃ¶rgy `nog' Jeney, nog@sdf.lonestar.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -28,42 +29,25 @@
 #ifndef _SCHED_H_
 #define _SCHED_H_
 
+#include "siminstance.h"
+
 /*! Macro to add a job to the scheduler */
-#define SCHED_ADD(job_func, job_param, job_time) sched_add(job_func, job_param, job_time, #job_func)
+#define SCHED_ADD(job_func, job_param, job_time) sched_add(sim, job_func, job_param, job_time, #job_func)
 
 /*! Macro to remove a job from the scheduler */
-#define SCHED_FIND_REMOVE(f, p) sched_find_remove(f, p)
-
-/*! Structure for holding one job entry */
-struct sched_entry
-{
-  int32_t time;			/* Clock cycles before job starts */
-  void *param;			/* Parameter to pass to the function */
-  void (*func) (void *);	/* Function to call when time reaches 0 */
-  struct sched_entry *next;
-};
-
-/*! Heap of jobs */
-struct scheduler_struct
-{
-  struct sched_entry *free_job_queue;
-  struct sched_entry *job_queue;
-};
-
-/* Global data structures for external use */
-extern struct scheduler_struct scheduler;
+#define SCHED_FIND_REMOVE(f, p) sched_find_remove(sim, f, p)
 
 /* Function prototypes for external use */
-extern void sched_init ();
-extern void sched_reset ();
-extern void sched_next_insn (void  (*func) (void *),
+extern void sched_init (or1ksim *sim);
+extern void sched_reset (or1ksim *sim);
+extern void sched_next_insn (or1ksim *sim, void  (*func) (or1ksim *sim, void *),
 			     void *dat);
-extern void sched_find_remove (void        (*job_func) (void *),
+extern void sched_find_remove (or1ksim *sim, void        (*job_func) (or1ksim *sim, void *),
 			       void       *dat);
-extern void sched_add (void        (*job_func) (void *),
+extern void sched_add (or1ksim *sim, void        (*job_func) (or1ksim *sim, void *),
 		       void       *job_param,
 		       int32_t     job_time,
 		       const char *func);
-extern void do_scheduler ();
+extern void do_scheduler (or1ksim *sim);
 
 #endif /* _SCHED_H_ */

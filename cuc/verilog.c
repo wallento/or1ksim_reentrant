@@ -2,6 +2,7 @@
 
    Copyright (C) 2002 Marko Mlinar, markom@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -81,7 +82,7 @@ find_lsc_index (cuc_func * f, int ref)
 
 /* Print out dependencies as verilog expression */
 static void
-print_deps (FILE * fo, cuc_func * f, int b, dep_list * t, int registered)
+print_deps (or1ksim *sim, FILE * fo, cuc_func * f, int b, dep_list * t, int registered)
 {
   if (t)
     {
@@ -158,7 +159,7 @@ print_op_v (cuc_func * f, char *s, int ref, int j)
 
 /* Prints out specified instruction */
 static void
-print_insn_v (FILE * fo, cuc_func * f, int b, int i)
+print_insn_v (or1ksim *sim, FILE * fo, cuc_func * f, int b, int i)
 {
   cuc_insn *ii = &f->bb[b].insn[i];
   char *s = known[ii->index].rtl;
@@ -229,7 +230,7 @@ print_insn_v (FILE * fo, cuc_func * f, int b, int i)
       assert (ii->opt[1] == OPT_REF);
       GEN ("  if (");
       if (f->bb[b].mdep)
-	print_deps (fo, f, b, f->bb[b].mdep, 0);
+	print_deps (sim, fo, f, b, f->bb[b].mdep, 0);
       else
 	GEN ("bb_stb[%i]", b);
       GEN (") t%x_%x <= #Tp t%lx_%lx;\n", b, i,
@@ -292,7 +293,7 @@ func_index (cuc_func * f, int ref)
 
 /* Generates verilog file out of insn dataflow */
 void
-output_verilog (cuc_func * f, char *filename, char *funcname)
+output_verilog (or1ksim *sim, cuc_func * f, char *filename, char *funcname)
 {
   FILE *fo;
   int b, i, j;
@@ -595,7 +596,7 @@ output_verilog (cuc_func * f, char *filename, char *funcname)
 	    if (f->bb[b].mdep)
 	      {
 		GEN (" && ");
-		print_deps (fo, f, b, f->bb[b].mdep, 0);
+		print_deps (sim, fo, f, b, f->bb[b].mdep, 0);
 	      }
 	    /* Is branch to BBID_END conditional? */
 	    if (f->bb[b].next[1 - i] >= 0)
@@ -625,7 +626,7 @@ output_verilog (cuc_func * f, char *filename, char *funcname)
 	      GEN ("\n                    || ");
 	    if (prev->mdep)
 	      {
-		print_deps (fo, f, f->bb[b].prev[i], prev->mdep, 0);
+		print_deps (sim, fo, f, f->bb[b].prev[i], prev->mdep, 0);
 		GEN (" && ");
 	      }
 	    GEN ("bb_stb[%i]", f->bb[b].prev[i]);
@@ -677,7 +678,7 @@ output_verilog (cuc_func * f, char *filename, char *funcname)
     {
       GEN ("\t\t/* BB%i */\n", b);
       for (i = 0; i < f->bb[b].ninsn; i++)
-	print_insn_v (fo, f, b, i);
+	print_insn_v (sim, fo, f, b, i);
       GEN ("\n");
     }
 
@@ -805,7 +806,7 @@ output_verilog (cuc_func * f, char *filename, char *funcname)
 		assert (f->INSN (f->msched[i]).
 			opt[1] & (OPT_REF | OPT_REGISTER));
 		GEN ("if (");
-		print_deps (fo, f, REF_BB (f->msched[i]),
+		print_deps (sim, fo, f, REF_BB (f->msched[i]),
 			    f->INSN (f->msched[i]).dep, 1);
 		GEN (") begin\n");
 		GEN ("    %c_req_o = 1'b1;\n", c);
@@ -873,7 +874,7 @@ output_verilog (cuc_func * f, char *filename, char *funcname)
 		      f->mtype[i]);
 	    assert (f->INSN (f->msched[i]).opt[1] & (OPT_REF | OPT_REGISTER));
 	    GEN ("    if (");
-	    print_deps (fo, f, REF_BB (f->msched[i]),
+	    print_deps (sim, fo, f, REF_BB (f->msched[i]),
 			f->INSN (f->msched[i]).dep, 1);
 	    GEN (") begin\n");
 	    print_turn_off_dep (fo, f, dep);
@@ -919,7 +920,7 @@ output_verilog (cuc_func * f, char *filename, char *funcname)
 }
 
 void
-generate_main (int nfuncs, cuc_func ** f, char *filename)
+generate_main (or1ksim *sim, int nfuncs, cuc_func ** f, char *filename)
 {
   FILE *fo;
   int i, j, nrf, first;
@@ -966,7 +967,7 @@ generate_main (int nfuncs, cuc_func ** f, char *filename)
   GEN ("/* Includes %i functions:", nrf);
   for (i = 0; i < nfuncs; i++)
     if (f[i])
-      GEN ("\n%s", prof_func[i].name);
+      GEN ("\n%s", sim->profiler.prof_func[i].name);
   GEN (" */\n\n");
 
   GEN ("`include \"timescale.v\"\n\n");
@@ -1044,7 +1045,7 @@ generate_main (int nfuncs, cuc_func ** f, char *filename)
       {
 	int ci = 0, co = 0;
 	int fn = f[i]->tmp;
-	GEN ("\n/* Registers for function %s */\n", prof_func[i].name);
+	GEN ("\n/* Registers for function %s */\n", sim->profiler.prof_func[i].name);
 	for (j = 0, first = 1; j < MAX_REGS; j++)
 	  if (f[i]->used_regs[j])
 	    {
@@ -1269,7 +1270,7 @@ generate_main (int nfuncs, cuc_func ** f, char *filename)
       {
 	int nf = f[i]->tmp;
 	GEN ("\n%s%s i%i(.clk(clk), .rst(rst),\n", filename,
-	     prof_func[i].name, nf);
+	     sim->profiler.prof_func[i].name, nf);
 	GEN
 	  ("  .l_adr_o(i%i_l_adr), .l_dat_i(i%i_l_dat), .l_req_o(i_l_req[%i]),\n",
 	   nf, nf, nf);

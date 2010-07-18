@@ -2,6 +2,7 @@
 
    Copyright (C) 2000 Damjan Lampret, lampret@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -31,9 +32,9 @@
 #include "sim-config.h"
 
 /* Function prototypes for external use */
-extern void      tick_reset ();
-extern void      spr_write_ttcr (uorreg_t value);
-extern void      spr_write_ttmr (uorreg_t value);
-extern uorreg_t  spr_read_ttcr ();
+extern void      tick_reset (or1ksim *sim);
+extern void      spr_write_ttcr (or1ksim *sim, uorreg_t value);
+extern void      spr_write_ttmr (or1ksim *sim, uorreg_t value);
+extern uorreg_t  spr_read_ttcr (or1ksim *sim);
 
 #endif	/* TICK__H */

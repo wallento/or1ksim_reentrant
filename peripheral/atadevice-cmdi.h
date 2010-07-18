@@ -2,6 +2,7 @@
 
    Copyright (C) 2002 Richard Herveille, rherveille@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -29,7 +30,7 @@
 
 /* Package includes */
 #include "atadevice.h"
-
+#include "siminstance.h"
 
 /**********************************************************************/
 /* Define default CHS translation parameters                          */
@@ -94,7 +95,7 @@ QUEUE_DEPTH = actual_queue_depth -1
    -- Prototypes --
    ----------------
 */
-int  ata_device_execute_cmd(struct ata_device *device);
+int  ata_device_execute_cmd(or1ksim *sim, struct ata_device *device);
 
 void ata_execute_device_diagnostics_cmd(struct ata_device *device);
 

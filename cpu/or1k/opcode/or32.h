@@ -2,6 +2,7 @@
 
    Copyright 1990, 1991, 1992, 1993 Free Software Foundation, Inc.
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributed by Damjan Lampret (lampret@opencores.org).
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
@@ -31,6 +32,8 @@
 #ifndef OR32_H_ISA
 #define OR32_H_ISA
 
+#include "siminstance.h"
+
 #define NUM_UNSIGNED (0)
 #define NUM_SIGNED (1)
 
@@ -42,7 +45,6 @@
 #define CONST const
 #endif
 
-#define MAX_GPRS 32
 #define PAGE_SIZE 8192
 #undef __HALF_WORD_INSN__
 
@@ -58,10 +60,10 @@
 # elif DYNAMIC_EXECUTION
 #  include "dyn32-defs.h"
 # else
-extern void l_none PARAMS((void));
+extern void l_none PARAMS((or1ksim *sim));
 # endif
 #else
-extern void l_none PARAMS((void));
+extern void l_none PARAMS((or1ksim *sim));
 #endif
 
 
@@ -70,23 +72,6 @@ struct or32_letter {
   int  sign;
   /* int  reloc; relocation per letter ??*/
 };
-
-enum insn_type {
- it_unknown,
- it_exception,
- it_arith,
- it_shift,
- it_compare,
- it_branch,
- it_jump,
- it_load,
- it_store,
- it_movimm,
- it_move,
- it_extend,
- it_nop,
- it_mac,
- it_float };
 
 /* Main instruction specification array.  */
 struct or32_opcode {
@@ -145,12 +130,6 @@ struct or32_opcode {
 #define OPTYPE_SHR  (0x0000001F)
 #define OPTYPE_SBIT_SHR (8)
 
-/* MM: Data how to decode operands.  */
-extern struct insn_op_struct {
-  unsigned long type;
-  unsigned long data;
-} **op_start;
-
 /* Leaf flag used in automata building */
 #define LEAF_FLAG         (0x80000000)
 
@@ -161,16 +140,16 @@ struct temp_insn_struct
   int in_pass;
 };
 
-extern unsigned long *automata;
-extern struct temp_insn_struct *ti;
+struct insn_op_struct {
+	  unsigned long type;
+	  unsigned long data;
+};
 
 extern CONST struct or32_letter or32_letters[];
 
 extern CONST struct  or32_opcode or32_opcodes[];
 
 extern CONST int num_opcodes;
-
-extern char *disassembled;
 
 /* Calculates instruction length in bytes.  Always 4 for OR32. */
 extern int insn_len PARAMS((int insn_index));
@@ -179,7 +158,7 @@ extern int insn_len PARAMS((int insn_index));
 extern int letter_signed PARAMS((char l));
 
 /* Number of letters in the individual lettered operand. */
-extern int letter_range PARAMS((char l));
+extern int letter_range PARAMS((or1ksim *sim, char l));
 
 /* MM: Returns index of given instruction name.  */
 extern int insn_index PARAMS((char *insn));
@@ -187,28 +166,28 @@ extern int insn_index PARAMS((char *insn));
 /* MM: Returns instruction name from index.  */
 extern CONST char *insn_name PARAMS ((int index));
 
-/* MM: Constructs new FSM, based on or32_opcodes.  */ 
-extern void build_automata PARAMS ((void));
+/* MM: Constructs new FSM, based on or32_opcodes.  */
+extern void build_automata PARAMS ((or1ksim* sim));
 
-/* MM: Destructs FSM.  */ 
-extern void destruct_automata PARAMS ((void));
+/* MM: Destructs FSM.  */
+extern void destruct_automata PARAMS ((or1ksim *sim));
 
 /* MM: Decodes instruction using FSM.  Call build_automata first.  */
-extern int insn_decode PARAMS((unsigned int insn));
+extern int insn_decode PARAMS((or1ksim* sim,unsigned int insn));
 
 /* Disassemble one instruction from insn to disassemble.
    Return the size of the instruction.  */
-int disassemble_insn (unsigned long insn);
+int disassemble_insn (or1ksim *sim,unsigned long insn);
 
 /* Disassemble one instruction from insn index.
    Return the size of the instruction.  */
-int disassemble_index (unsigned long insn, int index);
+int disassemble_index (or1ksim *sim, unsigned long insn, int index);
 
 /* FOR INTERNAL USE ONLY */
 /* Automatically does zero- or sign- extension and also finds correct
    sign bit position if sign extension is correct extension. Which extension
    is proper is figured out from letter description. */
-unsigned long extend_imm(unsigned long imm, char l);
+unsigned long extend_imm(or1ksim *sim, unsigned long imm, char l);
 
 /* Extracts value from opcode */
 unsigned long or32_extract(char param_ch, char *enc_initial, unsigned long insn);

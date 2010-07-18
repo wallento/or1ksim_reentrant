@@ -1,7 +1,8 @@
 /* debug.c -- Debug channel support code
 
-   Copyright (C) 2005 György `nog' Jeney, nog@sdf.lonestar.org
+   Copyright (C) 2005 GyÃ¶rgy `nog' Jeney, nog@sdf.lonestar.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -36,24 +37,15 @@
 /* Package includes */
 #include "arch.h"
 #include "sim-config.h"
+#include "siminstance.h"
 
 #define __ORSIM_NO_DEC_DBCH
 #include "debug.h"
 
-#define DECLARE_DEBUG_CHANNEL(dbch) char __orsim_dbch_##dbch[] = "\0"#dbch;
-#include "dbchs.h"
-#undef DECLARE_DEBUG_CHANNEL
-
-#define DECLARE_DEBUG_CHANNEL(dbch) __orsim_dbch_##dbch,
-static char *__orsim_dbchs[] = {
-#include "dbchs.h"
-NULL };
-#undef DECLARE_DEBUG_CHANNEL
-
 static const char *debug_classes[] = { "trace", "fixme", "warn", "err" };
 
 
-void orsim_dbg_log(enum __ORSIM_DEBUG_CLASS dbcl, const char *dbch,
+void orsim_dbg_log(or1ksim *sim, enum __ORSIM_DEBUG_CLASS dbcl, const char *dbch,
                    const char *function, const char *format, ...)
 {
   va_list ap;
@@ -63,7 +55,7 @@ void orsim_dbg_log(enum __ORSIM_DEBUG_CLASS dbcl, const char *dbch,
     if(!TRACE_ON(cycles))
       fprintf(stderr, "%s:%s:%s: ", debug_classes[dbcl], dbch + 1, function);
     else
-      fprintf(stderr, "%lld:%s:%s:%s: ", runtime.sim.cycles,
+      fprintf(stderr, "%lld:%s:%s:%s: ", sim->runtime.sim.cycles,
               debug_classes[dbcl], dbch + 1, function);
   }
   last_lf = format[strlen(format) - 1] == '\n'; /* This is wrong... */
@@ -80,11 +72,11 @@ void orsim_dbcl_set(enum __ORSIM_DEBUG_CLASS dbcl, char *dbch, int on)
     dbch[0] &= ~(1 << dbcl);
 }
 
-void orsim_dbcl_set_name(enum __ORSIM_DEBUG_CLASS dbcl, const char *dbch, int on)
+void orsim_dbcl_set_name(or1ksim *sim, enum __ORSIM_DEBUG_CLASS dbcl, const char *dbch, int on)
 {
-  char **dbchs = __orsim_dbchs; 
+  char **dbchs = sim->__orsim_dbchs;
 
-  for(dbchs = __orsim_dbchs; *dbchs; dbchs++) {
+  for(dbchs = sim->__orsim_dbchs; *dbchs; dbchs++) {
     if(!strcmp(*dbchs + 1, dbch)) {
       orsim_dbcl_set(dbcl, *dbchs, on);
       break;
@@ -92,7 +84,7 @@ void orsim_dbcl_set_name(enum __ORSIM_DEBUG_CLASS dbcl, const char *dbch, int on
   }
 }
 
-void parse_dbchs(const char *str)
+void parse_dbchs(or1ksim* sim, const char *str)
 {
   enum __ORSIM_DEBUG_CLASS dbcl = 0;
   int i;
@@ -128,19 +120,19 @@ void parse_dbchs(const char *str)
     }
     cend++;
 
-    for(i = 0; __orsim_dbchs[i]; i++)
-      if(!strncmp(cend, __orsim_dbchs[i] + 1, chan_end - cend))
+    for(i = 0; sim->__orsim_dbchs[i]; i++)
+      if(!strncmp(cend, sim->__orsim_dbchs[i] + 1, chan_end - cend))
         break;
 
-    if(!__orsim_dbchs[i])
+    if(!sim->__orsim_dbchs[i])
       fprintf(stderr, "Unknown channel specified\n");
     else if(all) {
-      orsim_dbcl_set(__ORSIM_DBCL_TRACE, __orsim_dbchs[i], disen);
-      orsim_dbcl_set(__ORSIM_DBCL_FIXME, __orsim_dbchs[i], disen);
-      orsim_dbcl_set(__ORSIM_DBCL_WARN, __orsim_dbchs[i], disen);
-      orsim_dbcl_set(__ORSIM_DBCL_ERR, __orsim_dbchs[i], disen);
+      orsim_dbcl_set(__ORSIM_DBCL_TRACE, sim->__orsim_dbchs[i], disen);
+      orsim_dbcl_set(__ORSIM_DBCL_FIXME, sim->__orsim_dbchs[i], disen);
+      orsim_dbcl_set(__ORSIM_DBCL_WARN, sim->__orsim_dbchs[i], disen);
+      orsim_dbcl_set(__ORSIM_DBCL_ERR, sim->__orsim_dbchs[i], disen);
     } else
-      orsim_dbcl_set(dbcl, __orsim_dbchs[i], disen);
+      orsim_dbcl_set(dbcl, sim->__orsim_dbchs[i], disen);
     if(*chan_end)
       str = chan_end + 1;
     else
@@ -160,17 +152,17 @@ void parse_dbchs(const char *str)
    @param[in] ...     The varargs required by the string                     */
 /*---------------------------------------------------------------------------*/
 void
-debug (int         level,
+debug (or1ksim *sim,int         level,
        const char *format,
                    ...)
 {
-  if (config.sim.debug >= level)
+  if (sim->config.sim.debug >= level)
     {
       va_list  ap;
 
       va_start (ap, format);
-      vfprintf (runtime.sim.fout, format, ap);
-      fflush (runtime.sim.fout);
+      vfprintf (sim->runtime.sim.fout, format, ap);
+      fflush (sim->runtime.sim.fout);
     }
 }	/* debug() */
 

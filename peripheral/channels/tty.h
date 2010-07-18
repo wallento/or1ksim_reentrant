@@ -28,6 +28,6 @@
 #define TTY__H
 
 /* Global data structures for external use */
-extern struct channel_ops  tty_channel_ops;
+extern const struct channel_ops  tty_channel_ops;
 
 #endif  /* TTY__H */

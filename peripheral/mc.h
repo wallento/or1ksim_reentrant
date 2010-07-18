@@ -2,6 +2,7 @@
 
    Copyright (C) 2001 by Marko Mlinar, markom@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -32,9 +33,9 @@
 
 
 /* Prototypes for external use */
-extern void  mc_done ();
-extern void  reg_mc_sec ();
-extern void  mc_reg_mem_area (struct dev_memarea *mem,
+extern void  mc_done (or1ksim *sim);
+extern void  reg_mc_sec (or1ksim *sim);
+extern void  mc_reg_mem_area (or1ksim *sim, struct dev_memarea *mem,
 			      unsigned int        cs,
 			      int                 mc);
 

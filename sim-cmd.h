@@ -2,6 +2,7 @@
 
    Copyright (C) 1999 Damjan Lampret, lampret@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
   
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
   
@@ -28,8 +29,10 @@
 #ifndef SIM_CMD_H
 #define SIM_CMD_H
 
+#include "siminstance.h"
+
 /* Prototypes for external use */
-extern void  handle_sim_command (void);
-extern void  reg_sim_stat (void (*stat_func) (void *dat), void *dat);
+extern void  handle_sim_command (or1ksim *sim );
+extern void  reg_sim_stat (or1ksim *sim, void (*stat_func) (or1ksim *sim, void *dat), void *dat);
 
 #endif /* SIM_CMD_H */

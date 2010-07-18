@@ -2,6 +2,7 @@
 
    Copyright (C) 1999 Damjan Lampret, lampret@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -41,12 +42,10 @@
 #include "sim-cmd.h"
 
 
-struct immu *immu_state;
-
 /* Insn MMU */
 
 static uorreg_t *
-immu_find_tlbmr (oraddr_t virtaddr, uorreg_t ** itlbmr_lru, struct immu *immu)
+immu_find_tlbmr (or1ksim *sim, oraddr_t virtaddr, uorreg_t ** itlbmr_lru, struct immu *immu)
 {
   int set;
   int i;
@@ -58,7 +57,7 @@ immu_find_tlbmr (oraddr_t virtaddr, uorreg_t ** itlbmr_lru, struct immu *immu)
   set &= immu->set_mask;
   vpn = virtaddr & immu->vpn_mask;
 
-  itlbmr = &cpu_state.sprs[SPR_ITLBMR_BASE (0) + set];
+  itlbmr = &sim->cpu_state.sprs[SPR_ITLBMR_BASE (0) + set];
   *itlbmr_lru = itlbmr;
 
   /* Scan all ways and try to find a matching way. */
@@ -73,27 +72,27 @@ immu_find_tlbmr (oraddr_t virtaddr, uorreg_t ** itlbmr_lru, struct immu *immu)
 }
 
 oraddr_t
-immu_translate (oraddr_t virtaddr)
+immu_translate (or1ksim *sim,oraddr_t virtaddr)
 {
   int i;
   uorreg_t *itlbmr;
   uorreg_t *itlbtr;
   uorreg_t *itlbmr_lru;
-  struct immu *immu = immu_state;
+  struct immu *immu = sim->immu_state;
 
-  if (!(cpu_state.sprs[SPR_SR] & SPR_SR_IME) ||
-      !(cpu_state.sprs[SPR_UPR] & SPR_UPR_IMP))
+  if (!(sim->cpu_state.sprs[SPR_SR] & SPR_SR_IME) ||
+      !(sim->cpu_state.sprs[SPR_UPR] & SPR_UPR_IMP))
     {
-      insn_ci = (virtaddr >= 0x80000000);
+      sim->insn_ci = (virtaddr >= 0x80000000);
       return virtaddr;
     }
 
-  itlbmr = immu_find_tlbmr (virtaddr, &itlbmr_lru, immu);
+  itlbmr = immu_find_tlbmr (sim, virtaddr, &itlbmr_lru, immu);
 
   /* Did we find our tlb entry? */
   if (itlbmr)
     {				/* Yes, we did. */
-      immu_stats.fetch_tlbhit++;
+      sim->immu_stats.fetch_tlbhit++;
       itlbtr = itlbmr + 128;
 
       /* Set LRUs */
@@ -111,87 +110,87 @@ immu_translate (oraddr_t virtaddr)
       *itlbmr |= immu->lru_reload;
 
       /* Check if page is cache inhibited */
-      insn_ci = *itlbtr & SPR_ITLBTR_CI;
+      sim->insn_ci = *itlbtr & SPR_ITLBTR_CI;
 
-      runtime.sim.mem_cycles += immu->hitdelay;
+      sim->runtime.sim.mem_cycles += immu->hitdelay;
 
       /* Test for page fault */
-      if (cpu_state.sprs[SPR_SR] & SPR_SR_SM)
+      if (sim->cpu_state.sprs[SPR_SR] & SPR_SR_SM)
 	{
 	  if (!(*itlbtr & SPR_ITLBTR_SXE))
-	    except_handle (EXCEPT_IPF, virtaddr);
+	    except_handle (sim,EXCEPT_IPF, virtaddr);
 	}
       else
 	{
 	  if (!(*itlbtr & SPR_ITLBTR_UXE))
-	    except_handle (EXCEPT_IPF, virtaddr);
+	    except_handle (sim,EXCEPT_IPF, virtaddr);
 	}
 
       return (*itlbtr & SPR_ITLBTR_PPN) | (virtaddr & immu->page_offset_mask);
     }
 
   /* No, we didn't. */
-  immu_stats.fetch_tlbmiss++;
+  sim->immu_stats.fetch_tlbmiss++;
 #if 0
   for (i = 0; i < immu->nways; i++)
-    if (((cpu_state.sprs[SPR_ITLBMR_BASE (i) + set] & SPR_ITLBMR_LRU) >> 6) <
+    if (((sim->cpu_state.sprs[SPR_ITLBMR_BASE (i) + set] & SPR_ITLBMR_LRU) >> 6) <
 	minlru)
       minway = i;
 
-  cpu_state.sprs[SPR_ITLBMR_BASE (minway) + set] &= ~SPR_ITLBMR_VPN;
-  cpu_state.sprs[SPR_ITLBMR_BASE (minway) + set] |= vpn << 12;
+  sim->cpu_state.sprs[SPR_ITLBMR_BASE (minway) + set] &= ~SPR_ITLBMR_VPN;
+  sim->cpu_state.sprs[SPR_ITLBMR_BASE (minway) + set] |= vpn << 12;
   for (i = 0; i < immu->nways; i++)
     {
-      uorreg_t lru = cpu_state.sprs[SPR_ITLBMR_BASE (i) + set];
+      uorreg_t lru = sim->cpu_state.sprs[SPR_ITLBMR_BASE (i) + set];
       if (lru & SPR_ITLBMR_LRU)
 	{
 	  lru = (lru & ~SPR_ITLBMR_LRU) | ((lru & SPR_ITLBMR_LRU) - 0x40);
-	  cpu_state.sprs[SPR_ITLBMR_BASE (i) + set] = lru;
+	  sim->cpu_state.sprs[SPR_ITLBMR_BASE (i) + set] = lru;
 	}
     }
-  cpu_state.sprs[SPR_ITLBMR_BASE (way) + set] &= ~SPR_ITLBMR_LRU;
-  cpu_state.sprs[SPR_ITLBMR_BASE (way) + set] |= (immu->nsets - 1) << 6;
+  sim->cpu_state.sprs[SPR_ITLBMR_BASE (way) + set] &= ~SPR_ITLBMR_LRU;
+  sim->cpu_state.sprs[SPR_ITLBMR_BASE (way) + set] |= (immu->nsets - 1) << 6;
 
   /* 1 to 1 mapping */
-  cpu_state.sprs[SPR_ITLBTR_BASE (minway) + set] &= ~SPR_ITLBTR_PPN;
-  cpu_state.sprs[SPR_ITLBTR_BASE (minway) + set] |= vpn << 12;
+  sim->cpu_state.sprs[SPR_ITLBTR_BASE (minway) + set] &= ~SPR_ITLBTR_PPN;
+  sim->cpu_state.sprs[SPR_ITLBTR_BASE (minway) + set] |= vpn << 12;
 
-  cpu_state.sprs[SPR_ITLBMR_BASE (minway) + set] |= SPR_ITLBMR_V;
+  sim->cpu_state.sprs[SPR_ITLBMR_BASE (minway) + set] |= SPR_ITLBMR_V;
 #endif
 
   /* if tlb refill implemented in HW */
-  /* return ((cpu_state.sprs[SPR_ITLBTR_BASE(minway) + set] & SPR_ITLBTR_PPN) >> 12) * immu->pagesize + (virtaddr % immu->pagesize); */
-  runtime.sim.mem_cycles += immu->missdelay;
+  /* return ((sim->cpu_state.sprs[SPR_ITLBTR_BASE(minway) + set] & SPR_ITLBTR_PPN) >> 12) * immu->pagesize + (virtaddr % immu->pagesize); */
+  sim->runtime.sim.mem_cycles += immu->missdelay;
 
-  except_handle (EXCEPT_ITLBMISS, virtaddr);
+  except_handle (sim,EXCEPT_ITLBMISS, virtaddr);
   return 0;
 }
 
-/* DESC: try to find EA -> PA transaltion without changing 
- *       any of precessor states. if this is not passible gives up 
+/* DESC: try to find EA -> PA transaltion without changing
+ *       any of precessor states. if this is not passible gives up
  *       (without triggering exceptions).
  *
- * PRMS: virtaddr  - EA for which to find translation 
+ * PRMS: virtaddr  - EA for which to find translation
  *
  * RTRN: 0         - no IMMU, IMMU disabled or ITLB miss
- *       else      - appropriate PA (note it IMMU is not present 
+ *       else      - appropriate PA (note it IMMU is not present
  *                   PA === EA)
  */
 oraddr_t
-peek_into_itlb (oraddr_t virtaddr)
+peek_into_itlb (or1ksim *sim, oraddr_t virtaddr)
 {
   uorreg_t *itlbmr;
   uorreg_t *itlbtr;
   uorreg_t *itlbmr_lru;
-  struct immu *immu = immu_state;
+  struct immu *immu = sim->immu_state;
 
-  if (!(cpu_state.sprs[SPR_SR] & SPR_SR_IME) ||
-      !(cpu_state.sprs[SPR_UPR] & SPR_UPR_IMP))
+  if (!(sim->cpu_state.sprs[SPR_SR] & SPR_SR_IME) ||
+      !(sim->cpu_state.sprs[SPR_UPR] & SPR_UPR_IMP))
     {
       return (virtaddr);
     }
 
-  itlbmr = immu_find_tlbmr (virtaddr, &itlbmr_lru, immu);
+  itlbmr = immu_find_tlbmr (sim, virtaddr, &itlbmr_lru, immu);
 
   /* Did we find our tlb entry? */
   if (itlbmr)
@@ -199,7 +198,7 @@ peek_into_itlb (oraddr_t virtaddr)
       itlbtr = itlbmr + 128;
 
       /* Test for page fault */
-      if (cpu_state.sprs[SPR_SR] & SPR_SR_SM)
+      if (sim->cpu_state.sprs[SPR_SR] & SPR_SR_SM)
 	{
 	  if (!(*itlbtr & SPR_ITLBTR_SXE))
 	    {
@@ -238,14 +237,14 @@ peek_into_itlb (oraddr_t virtaddr)
 */
 
 static void
-itlb_status (void *dat)
+itlb_status (or1ksim *sim, void *dat)
 {
   struct immu *immu = dat;
   int set;
   int way;
   int end_set = immu->nsets;
 
-  if (!(cpu_state.sprs[SPR_UPR] & SPR_UPR_IMP))
+  if (!(sim->cpu_state.sprs[SPR_UPR] & SPR_UPR_IMP))
     {
       PRINTF ("IMMU not implemented. Set UPR[IMP].\n");
       return;
@@ -258,12 +257,12 @@ itlb_status (void *dat)
     {
       for (way = 0; way < immu->nways; way++)
 	{
-	  PRINTF ("%s\n", dump_spr (SPR_ITLBMR_BASE (way) + set,
-				    cpu_state.sprs[SPR_ITLBMR_BASE (way) +
+	  PRINTF ("%s\n", dump_spr (sim, SPR_ITLBMR_BASE (way) + set,
+				    sim->cpu_state.sprs[SPR_ITLBMR_BASE (way) +
 						   set]));
 	  PRINTF ("%s\n",
-		  dump_spr (SPR_ITLBTR_BASE (way) + set,
-			    cpu_state.sprs[SPR_ITLBTR_BASE (way) + set]));
+		  dump_spr (sim, SPR_ITLBTR_BASE (way) + set,
+			    sim->cpu_state.sprs[SPR_ITLBTR_BASE (way) + set]));
 	}
     }
   if (0 < end_set)
@@ -281,17 +280,17 @@ itlb_status (void *dat)
    @param[in] dat  The config data structure                                 */
 /*---------------------------------------------------------------------------*/
 static void
-immu_enabled (union param_val val, void *dat)
+immu_enabled (or1ksim *sim,union param_val val, void *dat)
 {
   struct immu *immu = dat;
 
   if (val.int_val)
     {
-      cpu_state.sprs[SPR_UPR] |= SPR_UPR_IMP;
+      sim->cpu_state.sprs[SPR_UPR] |= SPR_UPR_IMP;
     }
   else
     {
-      cpu_state.sprs[SPR_UPR] &= ~SPR_UPR_IMP;
+      sim->cpu_state.sprs[SPR_UPR] &= ~SPR_UPR_IMP;
     }
 
   immu->enabled = val.int_val;
@@ -308,7 +307,7 @@ immu_enabled (union param_val val, void *dat)
    @param[in] dat  The config data structure                                 */
 /*---------------------------------------------------------------------------*/
 static void
-immu_nsets (union param_val  val,
+immu_nsets (or1ksim *sim,union param_val  val,
 	    void            *dat)
 {
   struct immu *immu = dat;
@@ -319,8 +318,8 @@ immu_nsets (union param_val  val,
 
       immu->nsets = val.int_val;
 
-      cpu_state.sprs[SPR_IMMUCFGR] &= ~SPR_IMMUCFGR_NTS;
-      cpu_state.sprs[SPR_IMMUCFGR] |= set_bits << SPR_IMMUCFGR_NTS_OFF;
+      sim->cpu_state.sprs[SPR_IMMUCFGR] &= ~SPR_IMMUCFGR_NTS;
+      sim->cpu_state.sprs[SPR_IMMUCFGR] |= set_bits << SPR_IMMUCFGR_NTS_OFF;
     }
   else
     {
@@ -339,7 +338,7 @@ immu_nsets (union param_val  val,
    @param[in] dat  The config data structure                                 */
 /*---------------------------------------------------------------------------*/
 static void
-immu_nways (union param_val  val,
+immu_nways (or1ksim *sim,union param_val  val,
 	    void            *dat)
 {
   struct immu *immu = dat;
@@ -350,8 +349,8 @@ immu_nways (union param_val  val,
 
       immu->nways = val.int_val;
 
-      cpu_state.sprs[SPR_IMMUCFGR] &= ~SPR_IMMUCFGR_NTW;
-      cpu_state.sprs[SPR_IMMUCFGR] |= way_bits << SPR_IMMUCFGR_NTW_OFF;
+      sim->cpu_state.sprs[SPR_IMMUCFGR] &= ~SPR_IMMUCFGR_NTW;
+      sim->cpu_state.sprs[SPR_IMMUCFGR] |= way_bits << SPR_IMMUCFGR_NTW_OFF;
     }
   else
     {
@@ -369,7 +368,7 @@ immu_nways (union param_val  val,
    @param[in] dat  The config data structure                                 */
 /*---------------------------------------------------------------------------*/
 static void
-immu_pagesize (union param_val  val,
+immu_pagesize (or1ksim *sim,union param_val  val,
 	       void            *dat)
 {
   struct immu *immu = dat;
@@ -394,7 +393,7 @@ immu_pagesize (union param_val  val,
    @param[in] dat  The config data structure                                 */
 /*---------------------------------------------------------------------------*/
 static void
-immu_entrysize (union param_val  val,
+immu_entrysize (or1ksim *sim,union param_val  val,
 		void            *dat)
 {
   struct immu *immu = dat;
@@ -419,7 +418,7 @@ immu_entrysize (union param_val  val,
    @param[in] dat  The config data structure                                 */
 /*---------------------------------------------------------------------------*/
 static void
-immu_ustates (union param_val  val,
+immu_ustates (or1ksim *sim,union param_val  val,
 	      void            *dat)
 {
   struct immu *immu = dat;
@@ -437,7 +436,7 @@ immu_ustates (union param_val  val,
 
 
 static void
-immu_missdelay (union param_val val, void *dat)
+immu_missdelay (or1ksim *sim,union param_val val, void *dat)
 {
   struct immu *immu = dat;
 
@@ -445,7 +444,7 @@ immu_missdelay (union param_val val, void *dat)
 }
 
 static void
-immu_hitdelay (union param_val val, void *dat)
+immu_hitdelay (or1ksim *sim,union param_val val, void *dat)
 {
   struct immu *immu = dat;
 
@@ -458,7 +457,7 @@ immu_hitdelay (union param_val val, void *dat)
    ALL parameters are set explicitly to default values.                      */
 /*---------------------------------------------------------------------------*/
 static void *
-immu_start_sec ()
+immu_start_sec (or1ksim *sim)
 {
   struct immu *immu;
   int          set_bits;
@@ -481,29 +480,29 @@ immu_start_sec ()
 
   if (immu->enabled)
     {
-      cpu_state.sprs[SPR_UPR] |= SPR_UPR_IMP;
+      sim->cpu_state.sprs[SPR_UPR] |= SPR_UPR_IMP;
     }
   else
     {
-      cpu_state.sprs[SPR_UPR] &= ~SPR_UPR_IMP;
+      sim->cpu_state.sprs[SPR_UPR] &= ~SPR_UPR_IMP;
     }
 
   set_bits = log2_int (immu->nsets);
-  cpu_state.sprs[SPR_IMMUCFGR] &= ~SPR_IMMUCFGR_NTS;
-  cpu_state.sprs[SPR_IMMUCFGR] |= set_bits << SPR_IMMUCFGR_NTS_OFF;
+  sim->cpu_state.sprs[SPR_IMMUCFGR] &= ~SPR_IMMUCFGR_NTS;
+  sim->cpu_state.sprs[SPR_IMMUCFGR] |= set_bits << SPR_IMMUCFGR_NTS_OFF;
 
   way_bits = immu->nways - 1;
-  cpu_state.sprs[SPR_IMMUCFGR] &= ~SPR_IMMUCFGR_NTW;
-  cpu_state.sprs[SPR_IMMUCFGR] |= way_bits << SPR_IMMUCFGR_NTW_OFF;
+  sim->cpu_state.sprs[SPR_IMMUCFGR] &= ~SPR_IMMUCFGR_NTW;
+  sim->cpu_state.sprs[SPR_IMMUCFGR] |= way_bits << SPR_IMMUCFGR_NTW_OFF;
 
-  immu_state = immu;
+  sim->immu_state = immu;
   return immu;
 
 }	/* immu_start_sec() */
 
 
 static void
-immu_end_sec (void *dat)
+immu_end_sec (or1ksim *sim,void *dat)
 {
   struct immu *immu = dat;
 
@@ -520,14 +519,14 @@ immu_end_sec (void *dat)
       PRINTF ("Insn MMU %dKB: %d ways, %d sets, entry size %d bytes\n",
 	      immu->nsets * immu->entrysize * immu->nways / 1024, immu->nways,
 	      immu->nsets, immu->entrysize);
-      reg_sim_stat (itlb_status, immu);
+      reg_sim_stat (sim, itlb_status, immu);
     }
 }
 
 void
-reg_immu_sec (void)
+reg_immu_sec (or1ksim* sim)
 {
-  struct config_section *sec = reg_config_sec ("immu", immu_start_sec,
+  struct config_section *sec = reg_config_sec (sim, "immu", immu_start_sec,
 					       immu_end_sec);
 
   reg_config_param (sec, "enabled", paramt_int, immu_enabled);

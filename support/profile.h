@@ -2,6 +2,7 @@
 
    Copyright (C) 2002 Marko Mlinar, markom@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -29,7 +30,7 @@
 
 /* Package includes */
 #include "arch.h"
-
+#include "siminstance.h"
 
 #define MPROF_READ     1
 #define MPROF_WRITE    2
@@ -39,7 +40,7 @@
 #define MPROF_32       32
 
 /* Adds a new entry to the memory profile file */
-void mprofile (oraddr_t memaddr, unsigned char type);
+void mprofile (or1ksim *sim,oraddr_t memaddr, unsigned char type);
 
 struct mprofentry_struct {
   oraddr_t addr;

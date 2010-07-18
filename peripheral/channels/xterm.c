@@ -73,7 +73,7 @@ static void *xterm_init (const char *input);
 static int   xterm_open (void *data);
 
 /*! Global data structure with the xterm interface functions */
-struct channel_ops  xterm_channel_ops = {
+const struct channel_ops  xterm_channel_ops = {
 	.init  = xterm_init,
 	.open  = xterm_open,
 	.close = xterm_close,

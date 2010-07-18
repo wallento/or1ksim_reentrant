@@ -1,6 +1,7 @@
 /* or1ksim.h -- Simulator library header file
 
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
   
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
   
@@ -26,6 +27,7 @@
 #ifndef OR1KSIM__H
 #define OR1KSIM__H
 
+#include "siminstance.h"
 
 /* The bus width */
 
@@ -46,7 +48,10 @@ enum  or1ksim_rc {
 extern "C" {
 #endif
 
-int  or1ksim_init( const char         *config_file,
+or1ksim* or1ksim_instance();
+
+int  or1ksim_init( or1ksim* instance,
+		   const char         *config_file,
 		   const char         *image_file,
 		   void               *class_ptr,
 		   unsigned long int (*upr)( void              *class_ptr,
@@ -57,23 +62,26 @@ int  or1ksim_init( const char         *config_file,
 					     unsigned long int  mask,
 					     unsigned long int  wdata ) );
 
-int  or1ksim_run( double  duration );
+int  or1ksim_run( or1ksim *sim, double  duration );
 
-void  or1ksim_reset_duration( double duration );
+void  or1ksim_reset_duration( or1ksim *sim, double duration );
 
-void  or1ksim_set_time_point();
+void  or1ksim_set_time_point( or1ksim *sim );
 
-double  or1ksim_get_time_period();
+double  or1ksim_get_time_period( or1ksim *sim );
 
-int  or1ksim_is_le();
+int  or1ksim_is_le( or1ksim *sim );
 
-unsigned long int  or1ksim_clock_rate();
+unsigned long int  or1ksim_clock_rate( or1ksim *sim );
 
-void or1ksim_interrupt( int  i );
+void or1ksim_interrupt( or1ksim *sim, int  i );
 
-void or1ksim_interrupt_set( int  i );
+void or1ksim_interrupt_set( or1ksim *sim, int  i );
 
-void or1ksim_interrupt_clear( int  i );
+void or1ksim_interrupt_clear( or1ksim *sim, int  i );
+
+/* new library routines */
+
 
 #ifdef __cplusplus
 }

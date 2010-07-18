@@ -2,6 +2,7 @@
 
    Copyright (C) 1999 Damjan Lampret, lampret@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
   
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
   
@@ -27,12 +28,13 @@
 #ifndef SPR_DEFS__H
 #define SPR_DEFS__H
 
+#include "defines.h"
+
 /* Definition of special-purpose registers (SPRs). */
 
 #define MAX_GRPS (32)
 #define MAX_SPRS_PER_GRP_BITS (11)
 #define MAX_SPRS_PER_GRP (1 << MAX_SPRS_PER_GRP_BITS)
-#define MAX_SPRS (0x10000)
 
 /* Base addresses for the groups */
 #define SPRGROUP_SYS	(0<< MAX_SPRS_PER_GRP_BITS)
@@ -521,7 +523,7 @@
 #define SPR_PCMR_DDS	0x00004000  /* Data dependency stall event */
 #define SPR_PCMR_WPE	0x03ff8000  /* Watchpoint events */
 
-/* 
+/*
  * Bit definitions for the Power management register
  *
  */

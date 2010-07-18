@@ -3,6 +3,7 @@
 
    Copyright (C) 2000 Damjan Lampret, lampret@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -87,7 +88,7 @@ endmodule\n"
 #define LABELEND_CHAR	":"
 
 void
-dumpverilog (char *verilog_modname, oraddr_t from, oraddr_t to)
+dumpverilog (or1ksim *sim,char *verilog_modname, oraddr_t from, oraddr_t to)
 {
   unsigned int i, done = 0;
   struct label_entry *tmp;
@@ -103,19 +104,19 @@ dumpverilog (char *verilog_modname, oraddr_t from, oraddr_t to)
     {
       if (!(i & 3))
 	{
-	  insn = eval_direct32 (i, 0, 0);
-	  index = insn_decode (insn);
+	  insn = eval_direct32 (sim,i, 0, 0);
+	  index = insn_decode (sim, insn);
 	  if (index >= 0)
 	    {
-	      if (verify_memoryarea (i) && (tmp = get_label (i)))
+	      if (verify_memoryarea (sim, i) && (tmp = get_label (sim, i)))
 		if (tmp)
 		  PRINTF ("\n//\t%s%s", tmp->name, LABELEND_CHAR);
 
 	      PRINTF ("\n\tmem['h%x] = %d'h%.8" PRIx32 ";", i / DWQ, DW,
-		      eval_direct32 (i, 0, 0));
+		      eval_direct32 (sim,i, 0, 0));
 
-	      disassemble_insn (insn);
-	      strcpy (dis, disassembled);
+	      disassemble_insn (sim, insn);
+	      strcpy (dis, sim->disassembled);
 
 	      if (strlen (dis) < DISWIDTH)
 		memset (dis + strlen (dis), ' ', DISWIDTH);
@@ -131,7 +132,7 @@ dumpverilog (char *verilog_modname, oraddr_t from, oraddr_t to)
       if (i % 64 == 0)
 	PRINTF ("\n");
 
-      PRINTF ("\n\tmem['h%x] = 'h%.2x;", i / DWQ, eval_direct8 (i, 0, 0));
+      PRINTF ("\n\tmem['h%x] = 'h%.2x;", i / DWQ, eval_direct8 (sim,i, 0, 0));
       done = 1;
     }
 
@@ -149,17 +150,17 @@ dumpverilog (char *verilog_modname, oraddr_t from, oraddr_t to)
 	PRINTF ("\n%.8x:  ", i);
 
       /* don't print ascii chars below 0x20. */
-      if (eval_direct32 (i, 0, 0) < 0x20)
-	PRINTF ("0x%.2x     ", (uint8_t) eval_direct32 (i, 0, 0));
+      if (eval_direct32 (sim,i, 0, 0) < 0x20)
+	PRINTF ("0x%.2x     ", (uint8_t) eval_direct32 (sim,i, 0, 0));
       else
-	PRINTF ("0x%.2x'%c'  ", (uint8_t) eval_direct32 (i, 0, 0),
-		(char) eval_direct32 (i, 0, 0));
+	PRINTF ("0x%.2x'%c'  ", (uint8_t) eval_direct32 (sim,i, 0, 0),
+		(char) eval_direct32 (sim,i, 0, 0));
     }
   PRINTF (OR1K_MEM_VERILOG_FOOTER);
 }
 
 void
-dumphex (oraddr_t from, oraddr_t to)
+dumphex (or1ksim *sim,oraddr_t from, oraddr_t to)
 {
   oraddr_t i;
   uint32_t insn;
@@ -169,15 +170,15 @@ dumphex (oraddr_t from, oraddr_t to)
     {
       if (!(i & 3))
 	{
-	  insn = eval_direct32 (i, 0, 0);
-	  index = insn_decode (insn);
+	  insn = eval_direct32 (sim,i, 0, 0);
+	  index = insn_decode (sim, insn);
 	  if (index >= 0)
 	    {
-	      PRINTF ("%.8" PRIx32 "\n", eval_direct32 (i, 0, 0));
+	      PRINTF ("%.8" PRIx32 "\n", eval_direct32 (sim,i, 0, 0));
 	      i += insn_len (index) - 1;
 	      continue;
 	    }
 	}
-      PRINTF ("%.2x\n", eval_direct8 (i, 0, 0));
+      PRINTF ("%.2x\n", eval_direct8 (sim,i, 0, 0));
     }
 }

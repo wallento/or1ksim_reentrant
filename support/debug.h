@@ -1,8 +1,9 @@
 /* debug.h -- Trace function declarations
 
    Copyright 1999 Patrik Stridvall (for the wine project: www.winehq.com)
-   Copyright (C) 2005 György `nog' Jeney, nog@sdf.lonestar.org
+   Copyright (C) 2005 GyÃ¶rgy `nog' Jeney, nog@sdf.lonestar.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -28,6 +29,8 @@
 #ifndef DEBUG__H
 #define DEBUG__H
 
+#include "siminstance.h"
+
 enum __ORSIM_DEBUG_CLASS {
   __ORSIM_DBCL_TRACE,
   __ORSIM_DBCL_FIXME,
@@ -35,11 +38,11 @@ enum __ORSIM_DEBUG_CLASS {
   __ORSIM_DBCL_ERR,
 };
 
-void orsim_dbg_log(enum __ORSIM_DEBUG_CLASS dbcl, const char *dbch,
+void orsim_dbg_log(or1ksim *sim, enum __ORSIM_DEBUG_CLASS dbcl, const char *dbch,
                    const char *function, const char *format, ...)
-                                          __attribute__((format(printf, 4, 5)));
-void orsim_dbcl_set_name(enum __ORSIM_DEBUG_CLASS dbcl, const char *dbch, int on);
-void parse_dbchs(const char *str);
+                                          __attribute__((format(printf, 5, 6)));
+void orsim_dbcl_set_name(or1ksim *sim, enum __ORSIM_DEBUG_CLASS dbcl, const char *dbch, int on);
+void parse_dbchs(or1ksim *sim, const char *str);
 
 #ifndef __ORSIM_DBG_USE_FUNC
 #define __ORSIM_DBG_USE_FUNC __FUNCTION__
@@ -60,7 +63,7 @@ void parse_dbchs(const char *str);
 
 #define __ORSIM_DEBUG_LOG(args...) \
   orsim_dbg_log(__dbcl, __dbch, __ORSIM_DBG_USE_FUNC, args); } } while(0)
- 
+
 #define TRACE_(ch) __ORSIM_DPRINTF(_TRACE, __orsim_dbch_##ch)
 #define FIXME_(ch) __ORSIM_DPRINTF(_FIXME, __orsim_dbch_##ch)
 #define WARN_(ch) __ORSIM_DPRINTF(_WARN, __orsim_dbch_##ch)
@@ -71,25 +74,17 @@ void parse_dbchs(const char *str);
 #define WARN __ORSIM_DPRINTF(_WARN, __orsim_dbch___default)
 #define ERR __ORSIM_DPRINTF(_ERR, __orsim_dbch___default)
 
-#define TRACE_ON(ch)          __ORSIM_GET_DEBUGGING(_TRACE,__orsim_dbch_##ch)
-#define WARN_ON(ch)           __ORSIM_GET_DEBUGGING(_WARN,__orsim_dbch_##ch)
-#define FIXME_ON(ch)          __ORSIM_GET_DEBUGGING(_FIXME,__orsim_dbch_##ch)
-#define ERR_ON(ch)            __ORSIM_GET_DEBUGGING(_ERR,__orsim_dbch_##ch)
-
-#define DEFAULT_DEBUG_CHANNEL(dbch) \
- extern char __orsim_dbch_##dbch[]; \
- static char * const __orsim_dbch___default = __orsim_dbch_##dbch;
-
-#ifndef __ORSIM_NO_DEC_DBCH
-#define DECLARE_DEBUG_CHANNEL(dbch) extern char __orsim_dbch_##dbch[];
-#endif
+#define TRACE_ON(ch)          __ORSIM_GET_DEBUGGING(_TRACE,sim->__orsim_dbch_##ch)
+#define WARN_ON(ch)           __ORSIM_GET_DEBUGGING(_WARN,sim->__orsim_dbch_##ch)
+#define FIXME_ON(ch)          __ORSIM_GET_DEBUGGING(_FIXME,sim->__orsim_dbch_##ch)
+#define ERR_ON(ch)            __ORSIM_GET_DEBUGGING(_ERR,sim->__orsim_dbch_##ch)
 
 /* For debugging purposes (of Or1ksim itself), it helps if debug can take
    advantage of the GNU C __attribute__ feature. */
 #ifdef __GNUC__
-void debug(int         level,
+void debug(or1ksim *sim,int         level,
 	   const char *format,...)
-  __attribute__((format(printf, 2, 3)));
+  __attribute__((format(printf, 3, 4)));
 #else
 void debug(int         level,
 	   const char *format,...);

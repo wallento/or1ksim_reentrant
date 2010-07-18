@@ -2,6 +2,7 @@
 
    Copyright (C) 1999 Damjan Lampret, lampret@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
   
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
   
@@ -44,14 +45,14 @@
 #include "execute.h"
 
 
-/* Should args be passed on stack for simprintf 
+/* Should args be passed on stack for simprintf
  *
- * FIXME: do not enable this since it causes problems 
+ * FIXME: do not enable this since it causes problems
  *        in some cases (an example beeing cbasic test
  *        from orp testbench). the problems is in
  *
  *        or1k/support/simprintf.c
- * 
+ *
  *        #if STACK_ARGS
  *                arg = eval_mem32(argaddr,&breakpoint);
  *                argaddr += 4;
@@ -60,19 +61,14 @@
  *                arg = evalsim_reg(atoi(regstr));
  *        #endif
  *
- *        the access to memory should be without any 
+ *        the access to memory should be without any
  *        checks (ie not like or32 application accessed it)
- * 
+ *
  */
 #define STACK_ARGS 0
 
-/* Length of PRINTF format string */
-#define FMTLEN 2000
-
-char fmtstr[FMTLEN];
-
 static char *
-simgetstr (oraddr_t stackaddr, unsigned long regparam)
+simgetstr (or1ksim *sim,oraddr_t stackaddr, unsigned long regparam)
 {
   oraddr_t fmtaddr;
   int i;
@@ -80,43 +76,43 @@ simgetstr (oraddr_t stackaddr, unsigned long regparam)
   fmtaddr = regparam;
 
   i = 0;
-  while (eval_direct8 (fmtaddr, 1, 0) != '\0')
+  while (eval_direct8 (sim,fmtaddr, 1, 0) != '\0')
     {
-      fmtstr[i++] = eval_direct8 (fmtaddr, 1, 0);
+      sim->fmtstr[i++] = eval_direct8 (sim,fmtaddr, 1, 0);
       fmtaddr++;
       if (i == FMTLEN - 1)
 	break;
     }
-  fmtstr[i] = '\0';
+  sim->fmtstr[i] = '\0';
 
-  return fmtstr;
+  return sim->fmtstr;
 }
 
 void
-simprintf (oraddr_t stackaddr, unsigned long regparam)
+simprintf (or1ksim *sim,oraddr_t stackaddr, unsigned long regparam)
 {
   uint32_t arg;
   oraddr_t argaddr;
   char *fmtstrend;
-  char *fmtstrpart = fmtstr;
+  char *fmtstrpart = sim->fmtstr;
   int tee_exe_log;
 
-  simgetstr (stackaddr, regparam);
+  simgetstr (sim,stackaddr, regparam);
 
 #if STACK_ARGS
   argaddr = stackaddr;
 #else
   argaddr = 3;
 #endif
-  tee_exe_log = (config.sim.exe_log
-		 && (config.sim.exe_log_type == EXE_LOG_SOFTWARE
-		     || config.sim.exe_log_type == EXE_LOG_SIMPLE)
-		 && config.sim.exe_log_start <= runtime.cpu.instructions
-		 && (config.sim.exe_log_end <= 0
-		     || runtime.cpu.instructions <= config.sim.exe_log_end));
+  tee_exe_log = (sim->config.sim.exe_log
+		 && (sim->config.sim.exe_log_type == EXE_LOG_SOFTWARE
+		     || sim->config.sim.exe_log_type == EXE_LOG_SIMPLE)
+		 && sim->config.sim.exe_log_start <= sim->runtime.cpu.instructions
+		 && (sim->config.sim.exe_log_end <= 0
+		     || sim->runtime.cpu.instructions <= sim->config.sim.exe_log_end));
 
   if (tee_exe_log)
-    fprintf (runtime.sim.fexe_log, "SIMPRINTF: ");
+    fprintf (sim->runtime.sim.fexe_log, "SIMPRINTF: ");
   while (strlen (fmtstrpart))
     {
       if ((fmtstrend = strstr (fmtstrpart + 1, "%")))
@@ -139,7 +135,7 @@ simprintf (oraddr_t stackaddr, unsigned long regparam)
 	    /* orig:  sprintf(regstr, "r%"PRIxADDR, ++argaddr); */
 	    /* orig:  arg = evalsim_reg(atoi(regstr)); */
 
-	    arg = evalsim_reg (++argaddr);
+	    arg = evalsim_reg (sim, ++argaddr);
 	  }
 #endif
 	  tmp = fmtstrpart;
@@ -155,31 +151,31 @@ simprintf (oraddr_t stackaddr, unsigned long regparam)
 	    {
 	      int len = 0;
 	      char *str;
-	      for (; eval_direct8 (arg++, 1, 0); len++);
+	      for (; eval_direct8 (sim,arg++, 1, 0); len++);
 	      len++;		/* for null char */
 	      arg -= len;
 	      str = (char *) malloc (len);
 	      len = 0;
-	      for (; eval_direct8 (arg, 1, 0); len++)
-		*(str + len) = eval_direct8 (arg++, 1, 0);
-	      *(str + len) = eval_direct8 (arg, 1, 0);	/* null ch */
+	      for (; eval_direct8 (sim,arg, 1, 0); len++)
+		*(str + len) = eval_direct8 (sim,arg++, 1, 0);
+	      *(str + len) = eval_direct8 (sim,arg, 1, 0);	/* null ch */
 	      printf (fmtstrpart, str);
 	      if (tee_exe_log)
-		fprintf (runtime.sim.fexe_log, fmtstrpart, str);
+		fprintf (sim->runtime.sim.fexe_log, fmtstrpart, str);
 	      free (str);
 	    }
 	  else
 	    {
 	      printf (fmtstrpart, arg);
 	      if (tee_exe_log)
-		fprintf (runtime.sim.fexe_log, fmtstrpart, arg);
+		fprintf (sim->runtime.sim.fexe_log, fmtstrpart, arg);
 	    }
 	}
       else
 	{
 	  printf (fmtstrpart);
 	  if (tee_exe_log)
-	    fprintf (runtime.sim.fexe_log, fmtstrpart);
+	    fprintf (sim->runtime.sim.fexe_log, fmtstrpart);
 	}
       if (!fmtstrend)
 	break;

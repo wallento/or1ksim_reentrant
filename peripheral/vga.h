@@ -2,6 +2,7 @@
 
    Copyright (C) 2002 Marko Mlinar, markom@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -30,6 +31,6 @@
 #define VGA__H
 
 /* Prototypes for external void */
-extern void  reg_vga_sec ();
+extern void  reg_vga_sec (or1ksim *sim);
 
 #endif /* VGA__H */

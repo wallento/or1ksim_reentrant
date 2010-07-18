@@ -2,6 +2,7 @@
 
    Copyright (C) 2000 Damjan Lampret, lampret@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -28,8 +29,8 @@
 #define UART_16450__H
 
 /* Prototypes for external use*/
-extern void  uart_reset ();
-extern void  uart_status ();
-extern void  reg_uart_sec ();
+extern void  uart_reset (or1ksim *sim,void *dat);
+extern void  uart_status (or1ksim* sim, void *dat);
+extern void  reg_uart_sec (or1ksim* sim);
 
 #endif  /* UART_16450__H */

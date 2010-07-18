@@ -2,6 +2,7 @@
 
    Copyright (C) 1999 Damjan Lampret, lampret@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
   
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
   
@@ -39,14 +40,26 @@
 #include "sched.h"
 #include "execute.h"
 #include "pic.h"
+#include "siminstance.h"
 
+/*!Allocate and initialize a simulator instance
+ *
+ * Allocate an instance of the simulator and fill it with default values
+ *
+ * @return Pointer to the allocated instance
+ */
+or1ksim* or1ksim_instance()
+{
+	return sim_instance();
+}
 
 /*---------------------------------------------------------------------------*/
-/*!Initialize the simulator. 
+/*!Initialize the simulator.
 
    Allows specification of an (optional) config file and an image file. Builds
    up dummy argc/argv to pass to the existing argument parser.
 
+   @param[in] sim          Simulator instance
    @param[in] config_file  Or1ksim configuration file name
    @param[in] image_file   The program image to execute
    @param[in] class_ptr    Pointer to a C++ class instance (for use when
@@ -57,7 +70,8 @@
    @return  0 on success and an error code on failure                        */
 /*---------------------------------------------------------------------------*/
 int
-or1ksim_init (const char *config_file,
+or1ksim_init ( or1ksim* sim,
+		  const char *config_file,
 	      const char *image_file,
 	      void       *class_ptr,
 	      unsigned long int (*upr) (void *class_ptr,
@@ -81,34 +95,35 @@ or1ksim_init (const char *config_file,
 
   /* Initialization copied from existing main() */
   srand (getpid ());
-  init_defconfig ();
-  reg_config_secs ();
+  init_defconfig ( sim );
+  reg_config_secs ( sim );
+  sim_register( sim );
 
-  if (parse_args (dummy_argc, dummy_argv))
+  if (parse_args (sim,dummy_argc, dummy_argv))
     {
       return OR1KSIM_RC_BADINIT;
     }
 
-  config.sim.profile   = 0;	/* No profiling */
-  config.sim.mprofile  = 0;
+  sim->config.sim.profile   = 0;	/* No profiling */
+  sim->config.sim.mprofile  = 0;
 
-  config.ext.class_ptr = class_ptr;	/* SystemC linkage */
-  config.ext.read_up   = upr;
-  config.ext.write_up  = upw;
+  sim->config.ext.class_ptr = class_ptr;	/* SystemC linkage */
+  sim->config.ext.read_up   = upr;
+  sim->config.ext.write_up  = upw;
 
-  print_config ();		/* Will go eventually */
+  print_config (sim);		/* Will go eventually */
   signal (SIGINT, ctrl_c);	/* Not sure we want this really */
 
-  runtime.sim.hush = 1;		/* Not sure if this is needed */
-  do_stats = config.cpu.superscalar ||
-             config.cpu.dependstats ||
-             config.sim.history     ||
-             config.sim.exe_log;
+  sim->runtime.sim.hush = 1;		/* Not sure if this is needed */
+  sim->do_stats = sim->config.cpu.superscalar ||
+                  sim->config.cpu.dependstats ||
+                  sim->config.sim.history     ||
+                  sim->config.sim.exe_log;
 
-  sim_init ();
+  sim_init ( sim );
 
-  runtime.sim.ext_int_set = 0;	/* No interrupts pending to be set */
-  runtime.sim.ext_int_clr = 0;	/* No interrupts pending to be cleared */
+  sim->runtime.sim.ext_int_set = 0;	/* No interrupts pending to be set */
+  sim->runtime.sim.ext_int_clr = 0;	/* No interrupts pending to be cleared */
 
   return OR1KSIM_RC_OK;
 
@@ -133,24 +148,25 @@ or1ksim_init (const char *config_file,
    Uses a simplified version of the old main program loop. Returns success if
    the requested number of cycles were run and an error code otherwise.
 
+   @param[in] sim       Simulator instance
    @param[in] duration  Time to execute for (seconds)
 
    @return  OR1KSIM_RC_OK if we run to completion, OR1KSIM_RC_BRKPT if we hit
             a breakpoint (not clear how this can be set without CLI access)  */
 /*---------------------------------------------------------------------------*/
 int
-or1ksim_run (double duration)
+or1ksim_run (or1ksim *sim, double duration)
 {
-  const int  num_ints = sizeof (runtime.sim.ext_int_set) * 8;
+  const int  num_ints = sizeof (sim->runtime.sim.ext_int_set) * 8;
 
-  or1ksim_reset_duration (duration);
+  or1ksim_reset_duration (sim, duration);
 
   /* Loop until we have done enough cycles (or forever if we had a negative
      duration) */
-  while (duration < 0.0 || (runtime.sim.cycles < runtime.sim.end_cycles))
+  while (duration < 0.0 || (sim->runtime.sim.cycles < sim->runtime.sim.end_cycles))
     {
 
-      long long int time_start = runtime.sim.cycles;
+      long long int time_start = sim->runtime.sim.cycles;
       int i;			/* Interrupt # */
 
       /* Each cycle has counter of mem_cycles; this value is joined with cycles
@@ -158,25 +174,25 @@ or1ksim_run (double duration)
        * performed inbetween.
        */
 
-      runtime.sim.mem_cycles = 0;
+      sim->runtime.sim.mem_cycles = 0;
 
-      if (cpu_clock ())
+      if (cpu_clock (sim))
 	{
 	  return OR1KSIM_RC_BRKPT;	/* Hit a breakpoint */
 	}
 
-      runtime.sim.cycles += runtime.sim.mem_cycles;
+      sim->runtime.sim.cycles += sim->runtime.sim.mem_cycles;
 
       /* Take any external interrupts. Outer test is for the common case for
          efficiency. */
-      if (0 != runtime.sim.ext_int_set)
+      if (0 != sim->runtime.sim.ext_int_set)
 	{
 	  for (i = 0; i < num_ints; i++)
 	    {
-	      if (0x1 == ((runtime.sim.ext_int_set >> i) & 0x1))
+	      if (0x1 == ((sim->runtime.sim.ext_int_set >> i) & 0x1))
 		{
-		  report_interrupt (i);
-		  runtime.sim.ext_int_set &= ~(1 << i);	/* Clear req flag */
+		  report_interrupt (sim, i);
+		  sim->runtime.sim.ext_int_set &= ~(1 << i);	/* Clear req flag */
 		}
 	    }
 	}
@@ -184,26 +200,26 @@ or1ksim_run (double duration)
       /* Clear any interrupts as requested. For edge triggered interrupts this
 	 will happen in the same cycle. For level triggered, it must be an
 	 explicit call. */
-      if (0 != runtime.sim.ext_int_clr)
+      if (0 != sim->runtime.sim.ext_int_clr)
 	{
 	  for (i = 0; i < num_ints; i++)
 	    {
 	      /* Only clear interrupts that have been explicitly cleared */
-	      if(0x1 == ((runtime.sim.ext_int_clr >> i) & 0x1))
+	      if(0x1 == ((sim->runtime.sim.ext_int_clr >> i) & 0x1))
 		{
-		  clear_interrupt(i);
-		  runtime.sim.ext_int_clr &= ~(1 << i); /* Clear clr flag */
+		  clear_interrupt(sim, i);
+		  sim->runtime.sim.ext_int_clr &= ~(1 << i); /* Clear clr flag */
 		}
 	    }
 	}
 
       /* Update the scheduler queue */
 
-      scheduler.job_queue->time -= (runtime.sim.cycles - time_start);
+      sim->scheduler.job_queue->time -= (sim->runtime.sim.cycles - time_start);
 
-      if (scheduler.job_queue->time <= 0)
+      if (sim->scheduler.job_queue->time <= 0)
 	{
-	  do_scheduler ();
+	  do_scheduler (sim);
 	}
     }
 
@@ -218,14 +234,15 @@ or1ksim_run (double duration)
   Reset the time for which the simulation should run to the specified duration
   from NOW (i.e. NOT from when the run started).
 
+  @param[in] sim       Simulator instance
   @param[in] duration  Time to run for in seconds                            */
 /*---------------------------------------------------------------------------*/
 void
-or1ksim_reset_duration (double duration)
+or1ksim_reset_duration (or1ksim *sim, double duration)
 {
-  runtime.sim.end_cycles =
-    runtime.sim.cycles +
-    (long long int) (duration * 1.0e12 / (double) config.sim.clkcycle_ps);
+  sim->runtime.sim.end_cycles =
+    sim->runtime.sim.cycles +
+    (long long int) (duration * 1.0e12 / (double) sim->config.sim.clkcycle_ps);
 
 }	/* or1ksim_reset_duration() */
 
@@ -236,12 +253,13 @@ or1ksim_reset_duration (double duration)
    Internal utility to return the time executed so far. Note that this is a
    re-entrant routine.
 
-   @return  Time executed so far in seconds                                  */
+   @param[in] sim  Simulator instance
+   @return         Time executed so far in seconds                           */
 /*---------------------------------------------------------------------------*/
 static double
-internal_or1ksim_time ()
+internal_or1ksim_time ( or1ksim *sim )
 {
-  return (double) runtime.sim.cycles * (double) config.sim.clkcycle_ps /
+  return (double) sim->runtime.sim.cycles * (double) sim->config.sim.clkcycle_ps /
     1.0e12;
 
 }	// or1ksim_cycle_count()
@@ -250,12 +268,13 @@ internal_or1ksim_time ()
 /*---------------------------------------------------------------------------*/
 /*!Mark a time point in the simulation
 
-   Sets the internal parameter recording this point in the simulation        */
+   Sets the internal parameter recording this point in the simulation        
+   @param[in] sim  Simulator instance                                        */
 /*---------------------------------------------------------------------------*/
 void
-or1ksim_set_time_point ()
+or1ksim_set_time_point (or1ksim *sim)
 {
-  runtime.sim.time_point = internal_or1ksim_time ();
+  sim->runtime.sim.time_point = internal_or1ksim_time (sim);
 
 }	/* or1ksim_set_time_point() */
 
@@ -263,12 +282,13 @@ or1ksim_set_time_point ()
 /*---------------------------------------------------------------------------*/
 /*!Return the time since the time point was set
 
-  Get the value from the internal parameter                                  */
+  Get the value from the internal parameter
+  @param[in] sim  Simulator instance                                         */
 /*---------------------------------------------------------------------------*/
 double
-or1ksim_get_time_period ()
+or1ksim_get_time_period (or1ksim *sim)
 {
-  return internal_or1ksim_time () - runtime.sim.time_point;
+  return internal_or1ksim_time (sim) - sim->runtime.sim.time_point;
 
 }	/* or1ksim_get_time_period() */
 
@@ -278,10 +298,11 @@ or1ksim_get_time_period ()
 
    Note that this is a re-entrant routine.
 
+   @param[in] sim  Simulator instance
    @return 1 if the model is little endian, 0 otherwise.                     */
 /*---------------------------------------------------------------------------*/
 int
-or1ksim_is_le ()
+or1ksim_is_le (or1ksim *sim)
 {
 #ifdef OR32_BIG_ENDIAN
   return 0;
@@ -297,13 +318,14 @@ or1ksim_is_le ()
 
    Value is part of the configuration
 
+   @param[in] sim  Simulator instance
    @return  Clock rate in Hz.                                                */
 /*---------------------------------------------------------------------------*/
 unsigned long int
-or1ksim_clock_rate ()
+or1ksim_clock_rate (or1ksim *sim)
 {
   return (unsigned long int) (1000000000000ULL /
-			      (unsigned long long int) (config.sim.
+			      (unsigned long long int) (sim->config.sim.
 							clkcycle_ps));
 }	/* or1ksim_clock_rate() */
 
@@ -317,20 +339,21 @@ or1ksim_clock_rate ()
    @note There is no check that the specified interrupt number is reasonable
    (i.e. <= 31).
 
+   @param[in] sim  Simulator instance
    @param[in] i  The interrupt number                                        */
 /*---------------------------------------------------------------------------*/
 void
-or1ksim_interrupt (int i)
+or1ksim_interrupt (or1ksim *sim, int i)
 {
-  if (!config.pic.edge_trigger)
+  if (!sim->config.pic.edge_trigger)
     {
       fprintf (stderr, "Warning: or1ksim_interrupt should not be used for "
 	       "edge triggered interrupts. Ignored\n");
     }
   else
     {
-      runtime.sim.ext_int_set |= 1 << i;	// Better not be > 31!
-      runtime.sim.ext_int_clr |= 1 << i;	// Better not be > 31!
+      sim->runtime.sim.ext_int_set |= 1 << i;	// Better not be > 31!
+      sim->runtime.sim.ext_int_clr |= 1 << i;	// Better not be > 31!
     }
 }	/* or1ksim_interrupt() */
 
@@ -344,19 +367,20 @@ or1ksim_interrupt (int i)
    @note There is no check that the specified interrupt number is reasonable
    (i.e. <= 31).
 
+   @param[in] sim  Simulator instance
    @param[in] i  The interrupt number to set                                 */
 /*---------------------------------------------------------------------------*/
 void
-or1ksim_interrupt_set (int i)
+or1ksim_interrupt_set (or1ksim *sim, int i)
 {
-  if (config.pic.edge_trigger)
+  if (sim->config.pic.edge_trigger)
     {
       fprintf (stderr, "Warning: or1ksim_interrupt_set should not be used for "
 	       "level triggered interrupts. Ignored\n");
     }
   else
     {
-      runtime.sim.ext_int_set |= 1 << i;	// Better not be > 31!
+      sim->runtime.sim.ext_int_set |= 1 << i;	// Better not be > 31!
     }
 }	/* or1ksim_interrupt() */
 
@@ -370,18 +394,19 @@ or1ksim_interrupt_set (int i)
    @note There is no check that the specified interrupt number is reasonable
    (i.e. <= 31).
 
+   @param[in] sim  Simulator instance
    @param[in] i  The interrupt number to clear                               */
 /*---------------------------------------------------------------------------*/
 void
-or1ksim_interrupt_clear (int i)
+or1ksim_interrupt_clear (or1ksim *sim, int i)
 {
-  if (config.pic.edge_trigger)
+  if (sim->config.pic.edge_trigger)
     {
       fprintf (stderr, "Warning: or1ksim_interrupt_clear should not be used "
 	       "for level triggered interrupts. Ignored\n");
     }
   else
     {
-      runtime.sim.ext_int_clr |= 1 << i;	// Better not be > 31!
+      sim->runtime.sim.ext_int_clr |= 1 << i;	// Better not be > 31!
     }
 }	/* or1ksim_interrupt() */

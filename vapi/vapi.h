@@ -2,6 +2,7 @@
 
    Copyright (C) 2001, Marko Mlinar, markom@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -39,26 +40,26 @@ typedef enum
 } VAPI_COMMAND;
 
 /* Prototypes for external use */
-extern int   vapi_init ();
-extern void  vapi_done ();
-extern void  vapi_install_handler (unsigned long id,
-				   void (*read_func) (unsigned long,
+extern int   vapi_init (or1ksim *sim);
+extern void  vapi_done (or1ksim *sim);
+extern void  vapi_install_handler (or1ksim *sim, unsigned long id,
+				   void (*read_func) (or1ksim *sim,unsigned long,
 						      unsigned long,
 						      void *),
 				  void *dat);
-extern void  vapi_install_multi_handler (unsigned long base_id,
+extern void  vapi_install_multi_handler (or1ksim *sim, unsigned long base_id,
 					 unsigned long num_ids,
-					 void (*read_func) (unsigned long,
+					 void (*read_func) (or1ksim *sim,unsigned long,
 							    unsigned long,
 							    void *),
 					 void *dat);
 extern void  vapi_check ();
-extern int   vapi_num_unconnected (int printout);
-extern void  vapi_send (unsigned long id,
+extern int   vapi_num_unconnected (or1ksim *sim, int printout);
+extern void  vapi_send (or1ksim *sim, unsigned long id,
 			unsigned long data);
-extern void  vapi_write_log_file (VAPI_COMMAND command,
+extern void  vapi_write_log_file (or1ksim *sim, VAPI_COMMAND command,
 				  unsigned long device_id,
 				  unsigned long data);
-extern void  reg_vapi_sec ();
+extern void  reg_vapi_sec (or1ksim *sim);
 
 #endif /* VAPI__H */

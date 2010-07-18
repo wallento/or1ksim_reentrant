@@ -2,6 +2,7 @@
 
    Copyright (C) 1999 Damjan Lampret, lampret@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -36,7 +37,7 @@
 #include "sim-config.h"
 #include "toplevel-support.h"
 #include "execute.h"
-
+#include "siminstance.h"
 
 /*---------------------------------------------------------------------------*/
 /*!Main function
@@ -63,32 +64,36 @@ int
 main (int   argc,
       char *argv[])
 {
-  srand (getpid ());
-  init_defconfig ();
-  reg_config_secs ();
+	  or1ksim *sim = sim_instance();
 
-  if (parse_args (argc, argv))
+  printf( "%p\n", sim );
+  srand (getpid ());
+  init_defconfig (sim);
+  reg_config_secs (sim);
+  sim_register( sim );
+
+  if (parse_args (sim, argc, argv))
     {
       exit (-1);		/* Parse args will have printed any messages */
     }
 
-  print_config ();
+  print_config (sim);
   signal (SIGINT, ctrl_c);
 
-  runtime.sim.hush = 1;
-  do_stats         = config.cpu.superscalar ||
-                     config.cpu.dependstats ||
-                     config.sim.history     ||
-                     config.sim.exe_log;
+  sim->runtime.sim.hush = 1;
+  sim->do_stats         = sim->config.cpu.superscalar ||
+                          sim->config.cpu.dependstats ||
+                          sim->config.sim.history     ||
+                          sim->config.sim.exe_log;
 
-  sim_init ();
+  sim_init ( sim );
 
 #if DYNAMIC_EXECUTION
   dyn_main ();
 #else
-  exec_main ();
+  exec_main (sim);
 #endif
 
-  sim_done ();
+  sim_done (sim);
   exit (0);
 }

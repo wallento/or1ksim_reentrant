@@ -3,6 +3,7 @@
 
    Copyright (C) 2002 Richard Herveille, rherveille@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -41,7 +42,7 @@
  * then it is selected, the interrupt should be delivered, but I just drop it
  * (same goes for device 1). */
 static void
-ata_cmd_complete (void *dat)
+ata_cmd_complete (or1ksim *sim,void *dat)
 {
   struct ata_device *dev = dat;
 
@@ -57,7 +58,7 @@ ata_cmd_complete (void *dat)
     return;
 
   dev->sigs.intrq = 1;
-  ata_int (dev->internals.host);
+  ata_int (sim,dev->internals.host);
 }
 
 static void
@@ -114,7 +115,7 @@ ata_calc_lba (struct ata_device *dev)
 
 /* Reads a sector from the device */
 static void
-ata_read_sect (struct ata_device *dev)
+ata_read_sect (or1ksim *sim, struct ata_device *dev)
 {
   if (!dev->internals.nr_sect)
     return;
@@ -140,7 +141,7 @@ ata_read_sect (struct ata_device *dev)
 
 /* Writes a sector to the device */
 static void
-ata_write_sect (struct ata_device *dev)
+ata_write_sect (or1ksim *sim, struct ata_device *dev)
 {
   if (!dev->internals.nr_sect)
     {
@@ -925,7 +926,7 @@ ata_initialize_device_parameters_cmd (struct ata_device *device)
   A T A _ R E A D _ S E C T O R S
 */
 static void
-ata_read_sectors_cmd (struct ata_device *device)
+ata_read_sectors_cmd (or1ksim *sim, struct ata_device *device)
 {
   size_t sector_count;
   uint32_t lba;
@@ -969,7 +970,7 @@ ata_read_sectors_cmd (struct ata_device *device)
   device->internals.nr_sect = sector_count;
   device->internals.end_t_func = ata_read_sect;
 
-  ata_read_sect (device);
+  ata_read_sect (sim, device);
 }
 
 
@@ -1071,7 +1072,7 @@ ata_set_features (struct ata_device *dev)
 
 
 int
-ata_device_execute_cmd (struct ata_device *device)
+ata_device_execute_cmd (or1ksim *sim, struct ata_device *device)
 {
   /* execute the commands */
   switch (device->regs.command)
@@ -1099,7 +1100,7 @@ ata_device_execute_cmd (struct ata_device *device)
       return 0;
 
     case READ_SECTORS:
-      ata_read_sectors_cmd (device);
+      ata_read_sectors_cmd (sim, device);
       /* PIO-in command -- Doesn't interrupt on completion */
       return 0;
 

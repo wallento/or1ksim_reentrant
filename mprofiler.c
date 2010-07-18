@@ -3,6 +3,7 @@
    Copyright (C) 2002 Marko Mlinar, markom@opencores.org
    Copyright (C) 1999 Damjan Lampret, lampret@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -49,41 +50,20 @@
 #define BUF_SIZE        256
 
 /* HASH */
-#define HASH_SIZE       0x10000
 #define HASH_FUNC(x)    ((x) & 0xffff)
 
-/*! Hash table data structure */
-static struct memory_hash
-{
-  struct memory_hash *next;
-  oraddr_t            addr;
-  unsigned long       cnt[3];		/* Various counters */
-} *hash[HASH_SIZE];
-
-/*! Groups size -- how much addresses should be joined together */
-static int  group_bits = 2;
-
-/*! Start address */
-static oraddr_t  start_addr = 0;
-
-/*! End address */
-static oraddr_t  end_addr = 0xffffffff;
-
-/* File to read from */
-static FILE *fprof = 0;
-
 static void
-hash_add (oraddr_t addr, int index)
+hash_add (or1ksim* sim, oraddr_t addr, int index)
 {
-  struct memory_hash *h = hash[HASH_FUNC (addr)];
+  struct memory_hash *h = sim->mprofiler.hash[HASH_FUNC (addr)];
   while (h && h->addr != addr)
     h = h->next;
 
   if (!h)
     {
       h = (struct memory_hash *) malloc (sizeof (struct memory_hash));
-      h->next = hash[HASH_FUNC (addr)];
-      hash[HASH_FUNC (addr)] = h;
+      h->next = sim->mprofiler.hash[HASH_FUNC (addr)];
+      sim->mprofiler.hash[HASH_FUNC (addr)] = h;
       h->addr = addr;
       h->cnt[0] = h->cnt[1] = h->cnt[2] = 0;
     }
@@ -92,9 +72,9 @@ hash_add (oraddr_t addr, int index)
 
 
 static unsigned long
-hash_get (oraddr_t addr, int index)
+hash_get (or1ksim* sim, oraddr_t addr, int index)
 {
-  struct memory_hash *h = hash[HASH_FUNC (addr)];
+  struct memory_hash *h = sim->mprofiler.hash[HASH_FUNC (addr)];
   while (h && h->addr != addr)
     h = h->next;
 
@@ -104,15 +84,15 @@ hash_get (oraddr_t addr, int index)
 }
 
 static void
-init ()
+init (or1ksim* sim)
 {
   int i;
   for (i = 0; i < HASH_SIZE; i++)
-    hash[i] = NULL;
+    sim->mprofiler.hash[i] = NULL;
 }
 
 static void
-read_file (FILE * f, int mode)
+read_file (or1ksim *sim, FILE * f, int mode)
 {
   struct mprofentry_struct buf[BUF_SIZE];
   int num_read;
@@ -121,7 +101,7 @@ read_file (FILE * f, int mode)
       int i;
       num_read = fread (buf, sizeof (struct mprofentry_struct), BUF_SIZE, f);
       for (i = 0; i < num_read; i++)
-	if (buf[i].addr >= start_addr && buf[i].addr <= end_addr)
+	if (buf[i].addr >= sim->mprofiler.start_addr && buf[i].addr <= sim->mprofiler.end_addr)
 	  {
 	    int index;
 	    unsigned t = buf[i].type;
@@ -151,7 +131,7 @@ read_file (FILE * f, int mode)
 		PRINTF ("!!!!");
 		break;
 	      }
-	    hash_add (buf[i].addr >> group_bits, index);
+	    hash_add (sim, buf[i].addr >> sim->mprofiler.group_bits, index);
 	  }
     }
   while (num_read > 0);
@@ -176,18 +156,18 @@ nbits (unsigned long a)
 }
 
 static void
-printout (int mode)
+printout (or1ksim *sim, int mode)
 {
-  oraddr_t addr = start_addr & ~((1 << group_bits) - 1);
+  oraddr_t addr = sim->mprofiler.start_addr & ~((1 << sim->mprofiler.group_bits) - 1);
   PRINTF ("start = %" PRIxADDR " (%" PRIxADDR "); end = %" PRIxADDR
-	  "; group_bits = %08x\n", start_addr, addr, end_addr,
-	  (1 << group_bits) - 1);
-  for (; addr <= end_addr; addr += (1 << group_bits))
+	  "; sim->mprofiler.group_bits = %08x\n", sim->mprofiler.start_addr, addr, sim->mprofiler.end_addr,
+	  (1 << sim->mprofiler.group_bits) - 1);
+  for (; addr <= sim->mprofiler.end_addr; addr += (1 << sim->mprofiler.group_bits))
     {
       int i;
-      unsigned long a = hash_get (addr >> group_bits, 0);
-      unsigned long b = hash_get (addr >> group_bits, 1);
-      unsigned long c = hash_get (addr >> group_bits, 2);
+      unsigned long a = hash_get (sim, addr >> sim->mprofiler.group_bits, 0);
+      unsigned long b = hash_get (sim, addr >> sim->mprofiler.group_bits, 1);
+      unsigned long c = hash_get (sim, addr >> sim->mprofiler.group_bits, 2);
       PRINTF ("%" PRIxADDR ":", addr);
       switch (mode)
 	{
@@ -229,7 +209,7 @@ printout (int mode)
 	  break;
 	}
       PRINTF ("\n");
-      if (addr >= addr + (1 << group_bits))
+      if (addr >= addr + (1 << sim->mprofiler.group_bits))
 	break;			/* Overflow? */
     }
 }
@@ -248,7 +228,7 @@ printout (int mode)
     @return  0 on success, 1 on failure                                      */
 /*---------------------------------------------------------------------------*/
 int
-main_mprofiler (int argc, char *argv[], int just_help)
+main_mprofiler (or1ksim *sim, int argc, char *argv[], int just_help)
 {
   struct arg_lit *vercop;
   struct arg_lit *help;
@@ -367,16 +347,16 @@ main_mprofiler (int argc, char *argv[], int just_help)
     }
 
   /* Group bits */
-  group_bits = group->ival[0];
+  sim->mprofiler.group_bits = group->ival[0];
 
   /* Start and end addresses */
-  start_addr = from->ival[0];
-  end_addr = to->ival[0];
+  sim->mprofiler.start_addr = from->ival[0];
+  sim->mprofiler.end_addr = to->ival[0];
 
   /* Get the profile */
-  fprof = fopen (prof_file->filename[0], "rm");
+  sim->mprofiler.fprof = fopen (prof_file->filename[0], "rm");
 
-  if (!fprof)
+  if (!sim->mprofiler.fprof)
     {
       fprintf (stderr, "Cannot open profile file: %s\n",
 	       prof_file->filename[0]);
@@ -388,10 +368,10 @@ main_mprofiler (int argc, char *argv[], int just_help)
   /* Finished with the args */
   arg_freetable (argtab, sizeof (argtab) / sizeof (argtab[0]));
 
-  init ();
-  read_file (fprof, mode);
-  fclose (fprof);
-  printout (mode);
+  init (sim);
+  read_file (sim, sim->mprofiler.fprof, mode);
+  fclose (sim->mprofiler.fprof);
+  printout (sim, mode);
   return 0;
 
 }	/* main_mprofiler () */

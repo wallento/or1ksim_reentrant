@@ -21,6 +21,9 @@ Jeremy Bennett, <jeremy@jeremybennett.com>
  12 Oct 08: Complete tidy-up of the code base, fixing a string of bugs to make
             version 0.3.0 release candidate 1.
 
+Stefan Wallentowitz, <stefan.wallentowitz@tum.de>
+  26 Mar 09: Made libsim reentrant, so that multiple instances are possible
+
 Authors of the argtable2 library
 ================================
 

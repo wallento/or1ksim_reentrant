@@ -1,6 +1,7 @@
 /* toplevel-profile.c -- Profiling utility main program
 
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
   
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
   
@@ -35,14 +36,17 @@
 #include "sim-config.h"
 #include "profiler.h"
 
+#include "toplevel-support.h"
 
 int  main (int   argc,
 	   char *argv[])
 {
   srand(getpid());
-  init_defconfig();
-  reg_config_secs();
+  or1ksim *sim = sim_instance();
+  init_defconfig(sim);
+  reg_config_secs(sim);
+  sim_register( sim );
 
-  exit (main_profiler (argc, argv, 0));
+  exit (main_profiler (sim, argc, argv, 0));
 
 }	/* main() */

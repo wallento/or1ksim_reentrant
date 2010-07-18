@@ -2,6 +2,7 @@
 
    Copyright (C) 2002 Marko Mlinar, markom@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -31,8 +32,6 @@
 #include "abstract.h"
 
 
-/* Maximum number of instructions per function */
-#define MAX_INSNS	0x10000
 #define MAX_BB          0x1000
 #define MAX_REGS	34
 #define FLAG_REG	(MAX_REGS - 2)
@@ -102,15 +101,11 @@
 # define MAX(x,y)          ((x) > (y) ? (x) : (y))
 #endif
 
-#define log(x...)       {fprintf (flog, x); fflush (flog); }
+#define log(x...)       {fprintf (sim->flog, x); fflush (sim->flog); }
 
-#define cucdebug(x,s...) {if ((x) <= cuc_debug) PRINTF (s);}
+#define cucdebug(x,s...) {if ((x) <= sim->cuc_debug) PRINTF (s);}
 
 #define CUC_WIDTH_ITERATIONS  256
-
-/* Options */
-/* Whether we are debugging cuc (0-9) */
-extern int cuc_debug;
 
 /* Temporary registers by software convention */
 extern const int caller_saved[MAX_REGS];
@@ -153,20 +148,6 @@ typedef struct
   int new_time;
   double size;
 } cuc_timings;
-
-/* Instructionn entity */
-typedef struct
-{
-  int type;			/* type of the instruction */
-  int index;			/* Instruction index */
-  int opt[MAX_OPERANDS];	/* operand types */
-  unsigned long op[MAX_OPERANDS];	/* operand values */
-  dep_list *dep;		/* instruction dependencies */
-  unsigned long insn;		/* Instruction opcode */
-  char disasm[40];		/* disassembled string */
-  unsigned long max;		/* max result value */
-  int tmp;
-} cuc_insn;
 
 /* Basic block entity */
 typedef struct
@@ -219,29 +200,23 @@ typedef struct _cuc_func
   int tmp;
 } cuc_func;
 
-/* Instructions from function */
-extern cuc_insn insn[MAX_INSNS];
-extern int num_insn;
-extern int reloc[MAX_INSNS];
-extern FILE *flog;
-
 /* Loads from file into global array insn */
-int cuc_load (char *in_fn);
+int cuc_load (or1ksim *sim, char *in_fn);
 
 /* Negates conditional instruction */
 void negate_conditional (cuc_insn * ii);
 
 /* Scans sequence of BBs and set bb[].cnt */
-void generate_bb_seq (cuc_func * f, char *mp_filename, char *bb_filename);
+void generate_bb_seq (or1ksim *sim, cuc_func * f, char *mp_filename, char *bb_filename);
 
 /* Prints out instructions */
-void print_insns (int bb, cuc_insn * insn, int size, int verbose);
+void print_insns (or1ksim *sim, int bb, cuc_insn * insn, int size, int verbose);
 
 /* prints out bb string */
-void print_bb_num (int num);
+void print_bb_num (or1ksim *sim, int num);
 
 /* Print out basic blocks */
-void print_cuc_bb (cuc_func * func, char *s);
+void print_cuc_bb (or1ksim *sim, cuc_func * func, char *s);
 
 /* Duplicates function */
 cuc_func *dup_func (cuc_func * f);
@@ -250,51 +225,51 @@ cuc_func *dup_func (cuc_func * f);
 void free_func (cuc_func * f);
 
 /* Common subexpression matching -- resource sharing, analysis pass */
-void csm (cuc_func * f);
+void csm (or1ksim *sim, cuc_func * f);
 
 /* Common subexpression matching -- resource sharing, generation pass */
-void csm_gen (cuc_func * f, cuc_func * rf, cuc_shared_item * shared,
+void csm_gen (or1ksim *sim, cuc_func * f, cuc_func * rf, cuc_shared_item * shared,
 	      int nshared);
 
 /* Set the BB limits */
-void detect_bb (cuc_func * func);
+void detect_bb (or1ksim *sim, cuc_func * func);
 
 /* Optimize basic blocks */
-int optimize_bb (cuc_func * func);
+int optimize_bb (or1ksim *sim, cuc_func * func);
 
 /* Search and optimize complex cmov assignments */
-int optimize_cmovs (cuc_func * func);
+int optimize_cmovs (or1ksim *sim, cuc_func * func);
 
 /* Optimizes dataflow tree */
-int optimize_tree (cuc_func * func);
+int optimize_tree (or1ksim *sim, cuc_func * func);
 
 /* Remove nop instructions */
-int remove_nops (cuc_func * func);
+int remove_nops (or1ksim *sim, cuc_func * func);
 
 /* Removes dead instruction */
-int remove_dead (cuc_func * func);
+int remove_dead (or1ksim *sim, cuc_func * func);
 
 /* Removes trivial register assignments */
-int remove_trivial_regs (cuc_func * f);
+int remove_trivial_regs (or1ksim *sim, cuc_func * f);
 
 /* Determine inputs and outputs */
-void set_io (cuc_func * func);
+void set_io (or1ksim *sim, cuc_func * func);
 
 /* Removes BBs marked as dead */
-int remove_dead_bb (cuc_func * func);
+int remove_dead_bb (or1ksim *sim, cuc_func * func);
 
 /* Common subexpression elimination */
-int cse (cuc_func * f);
+int cse (or1ksim *sim, cuc_func * f);
 
 /* Detect register dependencies */
-void reg_dep (cuc_func * func);
+void reg_dep (or1ksim *sim, cuc_func * func);
 
 /* Cuts the tree and marks registers */
-void mark_cut (cuc_func * f);
+void mark_cut (or1ksim *sim, cuc_func * f);
 
 /* Unroll loop b times times and return new function. Original
    function is unmodified. */
-cuc_func *preunroll_loop (cuc_func * func, int b, int preroll, int unroll,
+cuc_func *preunroll_loop (or1ksim *sim, cuc_func * func, int b, int preroll, int unroll,
 			  char *bb_filename);
 
 /* Clean memory and data dependencies */
@@ -302,37 +277,37 @@ void clean_deps (cuc_func * func);
 
 /* Schedule memory accesses
   0 - exact; 1 - strong; 2 - weak;  3 - none */
-int schedule_memory (cuc_func * func, int otype);
+int schedule_memory (or1ksim *sim, cuc_func * func, int otype);
 
 /* Recalculates bb[].cnt values, based on generated profile file */
 void recalc_cnts (cuc_func * f, char *bb_filename);
 
 /* Calculate timings */
-void analyse_timings (cuc_func * func, cuc_timings * timings);
+void analyse_timings (or1ksim *sim, cuc_func * func, cuc_timings * timings);
 
 /* Calculates facts, that are determined by conditionals */
-void insert_conditional_facts (cuc_func * func);
+void insert_conditional_facts (or1ksim *sim, cuc_func * func);
 
 /* Width optimization -- detect maximum values */
-void detect_max_values (cuc_func * f);
+void detect_max_values (or1ksim *sim, cuc_func * f);
 
 /* Inserts n nops before insn 'ref' */
-void insert_insns (cuc_func * f, int ref, int n);
+void insert_insns (or1ksim *sim, cuc_func * f, int ref, int n);
 
 /* Checks for some anomalies with references */
-void cuc_check (cuc_func * f);
+void cuc_check (or1ksim *sim, cuc_func * f);
 
 /* Adds memory dependencies based on ordering type */
 void add_memory_dep (cuc_func * f, int otype);
 
 /* Prints out instructions */
-void print_cuc_insns (char *s, int verbose);
+void print_cuc_insns (or1ksim *sim, char *s, int verbose);
 
 /* Build basic blocks */
-void build_bb (cuc_func * f);
+void build_bb (or1ksim *sim, cuc_func * f);
 
 /* Latch outputs in loops */
-void add_latches (cuc_func * f);
+void add_latches (or1ksim *sim, cuc_func * f);
 
 /* split the BB, based on the group numbers in .tmp */
 void expand_bb (cuc_func * f, int b);
@@ -341,10 +316,10 @@ void add_dep (dep_list ** list, int dep);
 
 void dispose_list (dep_list ** list);
 
-void main_cuc (char *filename);
+void main_cuc (or1ksim *sim, char *filename);
 
 void add_data_dep (cuc_func * f);
 
-void  reg_cuc_sec ();
+void  reg_cuc_sec (or1ksim *sim);
 
 #endif /* CUC__H */

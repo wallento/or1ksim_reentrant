@@ -2,6 +2,7 @@
 
    Copyright (C) 2000 Damjan Lampret, lampret@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
   
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
   
@@ -27,11 +28,13 @@
 #ifndef PIC__H
 #define PIC__H
 
+#include "siminstance.h"
+
 /* Prototypes */
-extern void  pic_reset ();
-extern void  report_interrupt (int line);
-extern void  clear_interrupt (int line);
-extern void  pic_ints_en ();
-extern void  reg_pic_sec ();
+extern void  pic_reset (or1ksim *sim);
+extern void  report_interrupt (or1ksim *sim,int line);
+extern void  clear_interrupt (or1ksim *sim,int line);
+extern void  pic_ints_en (or1ksim *sim);
+extern void  reg_pic_sec (or1ksim *sim);
 
 #endif  /* PIC__H */

@@ -3,6 +3,7 @@
    
    Copyright (C) 2002 Richard Prescott <rip@step.polymtl.ca>
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -42,28 +43,13 @@
 #include "tty.h"
 #include "xterm.h"
 
-struct channel_factory
-{
-  const char *name;
-  const struct channel_ops *ops;
-  struct channel_factory *next;
-};
-
-static struct channel_factory preloaded[] = {
-  {"fd",    &fd_channel_ops,    &preloaded[1]},
-  {"file",  &file_channel_ops,  &preloaded[2]},
-  {"xterm", &xterm_channel_ops, &preloaded[3]},
-  {"tcp",   &tcp_channel_ops,   &preloaded[4]},
-  {"tty",   &tty_channel_ops,   NULL}
-};
-
-static struct channel_factory *head = &preloaded[0];
+#include "siminstance.h"
 
 /* Forward declaration of static functions */
-static struct channel_factory *find_channel_factory (const char *name);
+static struct channel_factory *find_channel_factory (or1ksim *sim, const char *name);
 
 struct channel *
-channel_init (const char *descriptor)
+channel_init (or1ksim *sim, const char *descriptor)
 {
   struct channel *retval;
   struct channel_factory *current;
@@ -103,7 +89,7 @@ channel_init (const char *descriptor)
       exit (1);
     }
 
-  current = find_channel_factory (name);
+  current = find_channel_factory (sim, name);
 
   if (!current)
     {
@@ -180,11 +166,11 @@ channel_close (struct channel *channel)
 }
 
 static struct channel_factory *
-find_channel_factory (const char *name)
+find_channel_factory (or1ksim *sim, const char *name)
 {
-  struct channel_factory *current = head;
+  struct channel_factory *current = sim->head;
 
-  current = head;
+  current = sim->head;
   while (current && strcmp (current->name, name))
     {
       current = current->next;

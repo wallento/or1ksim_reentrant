@@ -2,6 +2,7 @@
 
    Copyright (C) 2002 Marko Mlinar, markom@opencores.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -34,7 +35,7 @@
 /* Package includes */
 #include "insn.h"
 #include "sim-config.h"
-
+#include "siminstance.h"
 
 /* Table of known instructions.  Watch out for indexes I_*! */
 const cuc_known_insn known[II_LAST + 1] = {
@@ -102,7 +103,7 @@ cuc_insn_name (cuc_insn * ii)
 
 /* Prints out instructions */
 void
-print_insns (int bb, cuc_insn * insn, int ninsn, int verbose)
+print_insns (or1ksim *sim, int bb, cuc_insn * insn, int ninsn, int verbose)
 {
   int i, j;
   for (i = 0; i < ninsn; i++)
@@ -146,7 +147,7 @@ print_insns (int bb, cuc_insn * insn, int ninsn, int verbose)
 	      break;
 	    case OPT_BB:
 	      PRINTF ("BB ");
-	      print_bb_num (insn[i].op[j]);
+	      print_bb_num (sim, insn[i].op[j]);
 	      PRINTF (", ");
 	      break;
 	    case OPT_LRBB:
@@ -229,7 +230,7 @@ add_data_dep (cuc_func * f)
 
 /* Inserts n nops before insn 'ref' */
 void
-insert_insns (cuc_func * f, int ref, int n)
+insert_insns (or1ksim *sim, cuc_func * f, int ref, int n)
 {
   int b1, i, j;
   int b = REF_BB (ref);
@@ -238,8 +239,8 @@ insert_insns (cuc_func * f, int ref, int n)
   assert (b < f->num_bb);
   assert (ins <= f->bb[b].ninsn);
   assert (f->bb[b].ninsn + n < MAX_INSNS);
-  if (cuc_debug >= 8)
-    print_cuc_bb (f, "PREINSERT");
+  if (sim->cuc_debug >= 8)
+    print_cuc_bb (sim, f, "PREINSERT");
   f->bb[b].insn = (cuc_insn *) realloc (f->bb[b].insn,
 					(f->bb[b].ninsn +
 					 n) * sizeof (cuc_insn));
@@ -247,13 +248,13 @@ insert_insns (cuc_func * f, int ref, int n)
   /* Set up relocations */
   for (i = 0; i < f->bb[b].ninsn; i++)
     if (i < ins)
-      reloc[i] = i;
+      sim->reloc[i] = i;
     else
-      reloc[i] = i + n;
+      sim->reloc[i] = i + n;
 
   /* Move instructions, based on relocations */
   for (i = f->bb[b].ninsn - 1; i >= 0; i--)
-    f->bb[b].insn[reloc[i]] = f->bb[b].insn[i];
+    f->bb[b].insn[sim->reloc[i]] = f->bb[b].insn[i];
   for (i = 0; i < n; i++)
     change_insn_type (&f->bb[b].insn[ins + i], II_NOP);
 
@@ -286,10 +287,10 @@ insert_insns (cuc_func * f, int ref, int n)
     }
   for (i = 0; i < f->nmsched; i++)
     if (REF_BB (f->msched[i]) == b)
-      f->msched[i] = REF (b, reloc[REF_I (f->msched[i])]);
-  if (cuc_debug >= 8)
-    print_cuc_bb (f, "POSTINSERT");
-  cuc_check (f);
+      f->msched[i] = REF (b, sim->reloc[REF_I (f->msched[i])]);
+  if (sim->cuc_debug >= 8)
+    print_cuc_bb (sim, f, "POSTINSERT");
+  cuc_check (sim, f);
 }
 
 /* returns nonzero, if instruction was simplified */
@@ -605,13 +606,10 @@ apply_edge_condition (cuc_insn * ii)
   return 0;
 }
 
-/* First primary input */
-static unsigned long tmp_op, tmp_opt;
-
 /* Recursive function that searches for primary inputs;
    returns 0 if cmov can be replaced by add */
 static int
-cmov_needed (cuc_func * f, int ref)
+cmov_needed (or1ksim *sim, cuc_func * f, int ref)
 {
   cuc_insn *ii = &f->INSN (ref);
   int j;
@@ -628,7 +626,7 @@ cmov_needed (cuc_func * f, int ref)
     {
       if (ii->opt[1] == OPT_REF)
 	{
-	  if (cmov_needed (f, ii->op[1]))
+	  if (cmov_needed (sim, f, ii->op[1]))
 	    {
 	      ii->tmp = 0;
 	      return 1;
@@ -636,12 +634,12 @@ cmov_needed (cuc_func * f, int ref)
 	}
       else
 	{
-	  if (tmp_opt == OPT_NONE)
+	  if (sim->tmp_opt == OPT_NONE)
 	    {
-	      tmp_op = ii->op[1];
-	      tmp_opt = ii->opt[1];
+	      sim->tmp_op = ii->op[1];
+	      sim->tmp_opt = ii->opt[1];
 	    }
-	  else if (tmp_opt != ii->opt[1] || tmp_op != ii->op[1])
+	  else if (sim->tmp_opt != ii->opt[1] || sim->tmp_op != ii->op[1])
 	    {
 	      ii->tmp = 0;
 	      return 1;
@@ -654,14 +652,14 @@ cmov_needed (cuc_func * f, int ref)
   /* Is this instruction CMOV? no => add to primary inputs */
   if ((ii->index != II_CMOV) || (ii->type & IT_VOLATILE))
     {
-      if (tmp_opt == OPT_NONE)
+      if (sim->tmp_opt == OPT_NONE)
 	{
-	  tmp_op = ref;
-	  tmp_opt = OPT_REF;
+	  sim->tmp_op = ref;
+	  sim->tmp_opt = OPT_REF;
 	  ii->tmp = 0;
 	  return 0;
 	}
-      else if (tmp_opt != OPT_REF || tmp_op != ref)
+      else if (sim->tmp_opt != OPT_REF || sim->tmp_op != ref)
 	{
 	  ii->tmp = 0;
 	  return 1;
@@ -678,7 +676,7 @@ cmov_needed (cuc_func * f, int ref)
       cucdebug (4, "(%x:%i)", ref, j);
       if (ii->opt[j] == OPT_REF)
 	{
-	  if (cmov_needed (f, ii->op[j]))
+	  if (cmov_needed (sim, f, ii->op[j]))
 	    {
 	      ii->tmp = 0;
 	      return 1;
@@ -686,12 +684,12 @@ cmov_needed (cuc_func * f, int ref)
 	}
       else
 	{
-	  if (tmp_opt == OPT_NONE)
+	  if (sim->tmp_opt == OPT_NONE)
 	    {
-	      tmp_op = ii->op[j];
-	      tmp_opt = ii->opt[j];
+	      sim->tmp_op = ii->op[j];
+	      sim->tmp_opt = ii->opt[j];
 	    }
-	  else if (tmp_opt != ii->opt[j] || tmp_op != ii->op[j])
+	  else if (sim->tmp_opt != ii->opt[j] || sim->tmp_op != ii->op[j])
 	    {
 	      ii->tmp = 0;
 	      return 1;
@@ -705,7 +703,7 @@ cmov_needed (cuc_func * f, int ref)
 
 /* Search and optimize complex cmov assignments */
 int
-optimize_cmovs (cuc_func * f)
+optimize_cmovs (or1ksim *sim, cuc_func * f)
 {
   int modified = 0;
   int b, i;
@@ -724,14 +722,14 @@ optimize_cmovs (cuc_func * f)
 	    cuc_insn *ii = &f->bb[b].insn[i];
 	    if (ii->index == II_CMOV && !(ii->type & IT_VOLATILE))
 	      {
-		tmp_opt = OPT_NONE;
+		sim->tmp_opt = OPT_NONE;
 		cucdebug (4, "\n");
-		if (!cmov_needed (f, REF (b, i)))
+		if (!cmov_needed (sim, f, REF (b, i)))
 		  {
-		    assert (tmp_opt != OPT_NONE);
+		    assert (sim->tmp_opt != OPT_NONE);
 		    change_insn_type (ii, II_ADD);
-		    ii->op[1] = tmp_op;
-		    ii->opt[1] = tmp_opt;
+		    ii->op[1] = sim->tmp_op;
+		    ii->opt[1] = sim->tmp_opt;
 		    ii->op[2] = 0;
 		    ii->opt[2] = OPT_CONST;
 		    ii->opt[3] = OPT_NONE;
@@ -761,7 +759,7 @@ insn_uses (cuc_func * f, int ref)
 /* handles some common CMOV, CMOV-CMOV cases;
    returns nonzero if anything optimized */
 static int
-optimize_cmov_more (cuc_func * f, int ref)
+optimize_cmov_more (or1ksim *sim, cuc_func * f, int ref)
 {
   int t = 0;
   cuc_insn *ii = &f->INSN (ref);
@@ -798,7 +796,7 @@ optimize_cmov_more (cuc_func * f, int ref)
 	      int r = ii->op[t];
 	      unsigned long x, xt, y, yt;
 	      cuc_insn *prev = &f->INSN (r);
-	      cuc_check (f);
+	      cuc_check (sim, f);
 	      cucdebug (3, "%x-%x\n", ref, r);
 	      assert (!(prev->type & IT_COND));
 	      if (prev->op[3 - t] != ii->op[3 - t]
@@ -825,7 +823,7 @@ optimize_cmov_more (cuc_func * f, int ref)
 	      ii->opt[3 - t] = yt;	/* Y */
 	      prev->op[0] = -1;
 	      prev->opt[0] = OPT_REGISTER | OPT_DEST;
-	      cuc_check (f);
+	      cuc_check (sim, f);
 	      return 1;
 	    }
 	}
@@ -898,15 +896,15 @@ optimize_cmov_more (cuc_func * f, int ref)
 	    {
 	      cuc_insn tmp, cmov;
 	      int ref2 = REF (REF_BB (ref), REF_I (ref) + 1);
-	      insert_insns (f, ref, 1);
+	      insert_insns (sim, f, ref, 1);
 	      a = &f->INSN (f->INSN (ref2).op[1]);
 	      b = &f->INSN (f->INSN (ref2).op[2]);
 	      cucdebug (4, "ref = %x %lx %lx\n", ref, f->INSN (ref2).op[1],
 			f->INSN (ref2).op[2]);
-	      if (cuc_debug >= 7)
+	      if (sim->cuc_debug >= 7)
 		{
-		  print_cuc_bb (f, "AAA");
-		  cuc_check (f);
+		  print_cuc_bb (sim, f, "AAA");
+		  cuc_check (sim, f);
 		}
 	      tmp = *a;
 	      cmov = f->INSN (ref2);
@@ -930,9 +928,9 @@ optimize_cmov_more (cuc_func * f, int ref)
 		}
 	      f->INSN (ref) = cmov;
 	      f->INSN (ref2) = tmp;
-	      if (cuc_debug >= 6)
-		print_cuc_bb (f, "BBB");
-	      cuc_check (f);
+	      if (sim->cuc_debug >= 6)
+		print_cuc_bb (sim, f, "BBB");
+	      cuc_check (sim, f);
 	      return 1;
 	    }
 	}
@@ -942,7 +940,7 @@ optimize_cmov_more (cuc_func * f, int ref)
 
 /* Optimizes dataflow tree */
 int
-optimize_tree (cuc_func * f)
+optimize_tree (or1ksim *sim, cuc_func * f)
 {
   int b, i, j;
   int modified;
@@ -951,8 +949,8 @@ optimize_tree (cuc_func * f)
   do
     {
       modified = 0;
-      if (cuc_debug)
-	cuc_check (f);
+      if (sim->cuc_debug)
+	cuc_check (sim, f);
       for (b = 0; b < f->num_bb; b++)
 	if (!(f->bb[b].type & BB_DEAD))
 	  {
@@ -1018,7 +1016,7 @@ optimize_tree (cuc_func * f)
 
 		/* handle some CMOV cases more deeply */
 		if (ii->index == II_CMOV
-		    && optimize_cmov_more (f, REF (b, i)))
+		    && optimize_cmov_more (sim, f, REF (b, i)))
 		  {
 		    modified = 1;
 		    continue;
@@ -1124,7 +1122,7 @@ optimize_tree (cuc_func * f)
 							 && prev->index ==
 							 II_SUB)
 			  {
-			    change_insn_type (&insn[i], II_SUB);
+			    change_insn_type (&sim->insn[i], II_SUB);
 			    ii->op[1] = prev->op[1];
 			    ii->opt[1] = prev->opt[1];
 			    ii->op[2] += prev->op[2];
@@ -1228,7 +1226,7 @@ optimize_tree (cuc_func * f)
 
 /* Remove nop instructions */
 int
-remove_nops (cuc_func * f)
+remove_nops (or1ksim *sim, cuc_func * f)
 {
   int b;
   int modified = 0;
@@ -1239,12 +1237,12 @@ remove_nops (cuc_func * f)
       for (i = 0; i < f->bb[b].ninsn; i++)
 	if (insn[i].index != II_NOP)
 	  {
-	    reloc[i] = d;
+	    sim->reloc[i] = d;
 	    insn[d++] = insn[i];
 	  }
 	else
 	  {
-	    reloc[i] = d;	/* For jumps only */
+	    sim->reloc[i] = d;	/* For jumps only */
 	  }
       if (f->bb[b].ninsn != d)
 	modified = 1;
@@ -1259,12 +1257,12 @@ remove_nops (cuc_func * f)
 	      if ((f->bb[c].insn[i].opt[j] & OPT_REF)
 		  && REF_BB (f->bb[c].insn[i].op[j]) == b)
 		f->bb[c].insn[i].op[j] =
-		  REF (b, reloc[REF_I (f->bb[c].insn[i].op[j])]);
+		  REF (b, sim->reloc[REF_I (f->bb[c].insn[i].op[j])]);
 
 	    while (d)
 	      {
 		if (REF_BB (d->ref) == b)
-		  d->ref = REF (b, reloc[REF_I (d->ref)]);
+		  d->ref = REF (b, sim->reloc[REF_I (d->ref)]);
 		d = d->next;
 	      }
 	  }
@@ -1273,7 +1271,7 @@ remove_nops (cuc_func * f)
 }
 
 static void
-unmark_tree (cuc_func * f, int ref)
+unmark_tree (or1ksim *sim, cuc_func * f, int ref)
 {
   cuc_insn *ii = &f->INSN (ref);
   cucdebug (5, "%x ", ref);
@@ -1283,13 +1281,13 @@ unmark_tree (cuc_func * f, int ref)
       ii->type &= ~IT_UNUSED;
       for (j = 0; j < MAX_OPERANDS; j++)
 	if (ii->opt[j] & OPT_REF)
-	  unmark_tree (f, ii->op[j]);
+	  unmark_tree (sim, f, ii->op[j]);
     }
 }
 
 /* Remove unused assignments */
 int
-remove_dead (cuc_func * f)
+remove_dead (or1ksim *sim, cuc_func * f)
 {
   int b, i;
   for (b = 0; b < f->num_bb; b++)
@@ -1305,7 +1303,7 @@ remove_dead (cuc_func * f)
 		&& (f->memory_order == MO_NONE || f->memory_order == MO_WEAK))
 	    || II_IS_STORE (ii->index))
 	  {
-	    unmark_tree (f, REF (b, i));
+	    unmark_tree (sim, f, REF (b, i));
 	    cucdebug (5, "\n");
 	  }
       }
@@ -1317,12 +1315,12 @@ remove_dead (cuc_func * f)
 	  change_insn_type (&f->bb[b].insn[i], II_NOP);
 	}
 
-  return remove_nops (f);
+  return remove_nops (sim, f);
 }
 
 /* Removes trivial register assignments */
 int
-remove_trivial_regs (cuc_func * f)
+remove_trivial_regs (or1ksim *sim, cuc_func * f)
 {
   int b, i;
   for (i = 0; i < MAX_REGS; i++)
@@ -1345,19 +1343,19 @@ remove_trivial_regs (cuc_func * f)
 	    }
 	}
     }
-  if (cuc_debug >= 2)
+  if (sim->cuc_debug >= 2)
     {
       PRINTF ("saved regs ");
       for (i = 0; i < MAX_REGS; i++)
 	PRINTF ("%i:%i ", i, f->saved_regs[i]);
       PRINTF ("\n");
     }
-  return remove_nops (f);
+  return remove_nops (sim, f);
 }
 
 /* Determine inputs and outputs */
 void
-set_io (cuc_func * f)
+set_io (or1ksim *sim, cuc_func * f)
 {
   int b, i, j;
   /* Determine register usage */
@@ -1366,8 +1364,8 @@ set_io (cuc_func * f)
       f->lur[i] = -1;
       f->used_regs[i] = 0;
     }
-  if (cuc_debug > 5)
-    print_cuc_bb (f, "SET_IO");
+  if (sim->cuc_debug > 5)
+    print_cuc_bb (sim, f, "SET_IO");
   for (b = 0; b < f->num_bb; b++)
     {
       for (i = 0; i < f->bb[b].ninsn; i++)
@@ -1404,18 +1402,18 @@ relocate_bb (cuc_bb * bb, int b, int back, int fwd)
 
 /* Latch outputs in loops */
 void
-add_latches (cuc_func * f)
+add_latches (or1ksim *sim, cuc_func * f)
 {
   int b, i, j;
 
   //print_cuc_bb (f, "ADD_LATCHES a");
   /* Cuts the tree and marks registers */
-  mark_cut (f);
+  mark_cut (sim, f);
 
   /* Split BBs with more than one group */
   for (b = 0; b < f->num_bb; b++)
     expand_bb (f, b);
-  remove_nops (f);
+  remove_nops (sim, f);
   //print_cuc_bb (f, "ADD_LATCHES 0");
 
   /* Convert accesses in BB_INLOOP type block to latched */
@@ -1430,7 +1428,7 @@ add_latches (cuc_func * f)
 	      /* If we are pointing to a INLOOP block from outside, or forward
 	         (= previous loop iteration) we must register that data */
 	      if ((f->bb[REF_BB (t)].type & BB_INLOOP
-		   || config.cuc.no_multicycle)
+		   || sim->config.cuc.no_multicycle)
 		  && !(f->INSN (t).type & (IT_BRANCH | IT_COND))
 		  && (REF_BB (t) != b || REF_I (t) >= i))
 		{
@@ -1505,7 +1503,7 @@ add_latches (cuc_func * f)
 
 /* CSE -- common subexpression elimination */
 int
-cse (cuc_func * f)
+cse (or1ksim *sim, cuc_func * f)
 {
   int modified = 0;
   int b, i, j, b1, i1, b2, i2;
@@ -1593,27 +1591,25 @@ count_cmovs (cuc_insn * ii, int match)
   return c;
 }
 
-static void search_csm (int iter, cuc_func * f, cuc_shared_list * list);
-static cuc_shared_list *main_list;
-static int *iteration;
+static void search_csm (or1ksim *sim, int iter, cuc_func * f, cuc_shared_list * list);
 
 /* CSM -- common subexpression matching -- resource sharing
    We try to match tree of instruction inside a BB with as many
    matches as possible. All possibilities are collected and
    options, making situation worse are removed */
 void
-csm (cuc_func * f)
+csm (or1ksim *sim, cuc_func * f)
 {
   int b, i, j;
   int cnt;
   cuc_shared_list *list;
   cuc_timings timings;
 
-  analyse_timings (f, &timings);
-  main_list = NULL;
+  analyse_timings (sim, f, &timings);
+  sim->main_list = NULL;
   for (b = 0; b < f->num_bb; b++)
     {
-      assert (iteration = (int *) malloc (sizeof (int) * f->bb[b].ninsn));
+      assert (sim->iteration = (int *) malloc (sizeof (int) * f->bb[b].ninsn));
       for (i = 0; i < f->bb[b].ninsn; i++)
 	{
 	  int cnt = 0, cntc = 0;
@@ -1635,74 +1631,74 @@ csm (cuc_func * f)
 		if (ok)
 		  {
 		    cntc++;
-		    sizec = sizec + insn_size (&f->bb[b].insn[j]);
+		    sizec = sizec + insn_size (sim, &f->bb[b].insn[j]);
 		  }
 		else
 		  {
 		    cnt++;
-		    size = size + insn_size (&f->bb[b].insn[j]);
+		    size = size + insn_size (sim, &f->bb[b].insn[j]);
 		  }
-		iteration[j] = 0;
+		sim->iteration[j] = 0;
 	      }
 	    else
-	      iteration[j] = -1;
+	      sim->iteration[j] = -1;
 	  if (cntc > 1)
 	    {
 	      assert (list =
 		      (cuc_shared_list *) malloc (sizeof (cuc_shared_list)));
-	      list->next = main_list;
+	      list->next = sim->main_list;
 	      list->from = NULL;
 	      list->ref = REF (b, i);
 	      list->cnt = cnt;
 	      list->cmatch = 1;
 	      list->cmovs = count_cmovs (&f->bb[b].insn[i], 3);
 	      list->osize = sizec;
-	      list->size = ii_size (f->bb[b].insn[i].index, 1);
-	      main_list = list;
-	      search_csm (0, f, list);
+	      list->size = ii_size (sim, f->bb[b].insn[i].index, 1);
+	      sim->main_list = list;
+	      search_csm (sim, 0, f, list);
 	    }
 	  if (cnt > 1)
 	    {
 	      assert (list =
 		      (cuc_shared_list *) malloc (sizeof (cuc_shared_list)));
-	      list->next = main_list;
+	      list->next = sim->main_list;
 	      list->from = NULL;
 	      list->ref = REF (b, i);
 	      list->cnt = cnt + cntc;
 	      list->cmatch = 0;
 	      list->cmovs = count_cmovs (&f->bb[b].insn[i], 2);
 	      list->osize = size + sizec;
-	      list->size = ii_size (f->bb[b].insn[i].index, 0);
-	      main_list = list;
-	      search_csm (0, f, list);
+	      list->size = ii_size (sim, f->bb[b].insn[i].index, 0);
+	      sim->main_list = list;
+	      search_csm (sim, 0, f, list);
 	    }
 	}
-      free (iteration);
+      free (sim->iteration);
     }
 
-  for (list = main_list; list; list = list->next)
+  for (list = sim->main_list; list; list = list->next)
     list->dead = 0;
   cnt = 0;
-  for (list = main_list; list; list = list->next)
+  for (list = sim->main_list; list; list = list->next)
     if (!list->dead)
       cnt++;
   cucdebug (1, "noptions = %i\n", cnt);
 
   /* Now we will check the real size of the 'improvements'; if the size
      actually increases, we abandom the option */
-  for (list = main_list; list; list = list->next)
-    if (list->cmovs * ii_size (II_CMOV, 0) * (list->cnt - 1) + list->size >=
+  for (list = sim->main_list; list; list = list->next)
+    if (list->cmovs * ii_size (sim, II_CMOV, 0) * (list->cnt - 1) + list->size >=
 	list->osize)
       list->dead = 1;
 
   cnt = 0;
-  for (list = main_list; list; list = list->next)
+  for (list = sim->main_list; list; list = list->next)
     if (!list->dead)
       cnt++;
   cucdebug (1, "noptions = %i\n", cnt);
 
   /* Count number of instructions grouped */
-  for (list = main_list; list; list = list->next)
+  for (list = sim->main_list; list; list = list->next)
     {
       cuc_shared_list *l = list;
       int c = 0;
@@ -1717,14 +1713,14 @@ csm (cuc_func * f)
     }
 
   cnt = 0;
-  for (list = main_list; list; list = list->next)
+  for (list = sim->main_list; list; list = list->next)
     if (!list->dead)
       cnt++;
   cucdebug (1, "noptions = %i\n", cnt);
 
 #if 1
   /* We can get a lot of options here, so we will delete duplicates */
-  for (list = main_list; list; list = list->next)
+  for (list = sim->main_list; list; list = list->next)
     if (!list->dead)
       {
 	cuc_shared_list *l;
@@ -1765,20 +1761,20 @@ csm (cuc_func * f)
 	    }
       }
   cnt = 0;
-  for (list = main_list; list; list = list->next)
+  for (list = sim->main_list; list; list = list->next)
     if (!list->dead)
       cnt++;
   cucdebug (1, "noptions = %i\n", cnt);
 #endif
   /* Print out */
-  for (list = main_list; list; list = list->next)
+  for (list = sim->main_list; list; list = list->next)
     if (!list->dead)
       {
 	cuc_shared_list *l = list;
 	cucdebug (1,
 		  "%-4s cnt %3i ninsn %3i size %8.1f osize %8.1f cmovs %3i @",
 		  cuc_insn_name (&f->INSN (list->ref)), list->cnt,
-		  list->ninsn, list->cmovs * ii_size (II_CMOV,
+		  list->ninsn, list->cmovs * ii_size (sim, II_CMOV,
 						      0) * (list->cnt - 1) +
 		  list->size, list->osize, list->cmovs);
 	while (l)
@@ -1793,7 +1789,7 @@ csm (cuc_func * f)
   for (b = 0; b < f->num_bb; b++)
     {
       cnt = 0;
-      for (list = main_list; list; list = list->next)
+      for (list = sim->main_list; list; list = list->next)
 	if (!list->dead && REF_BB (list->ref) == b)
 	  cnt++;
 
@@ -1807,7 +1803,7 @@ csm (cuc_func * f)
 	      (cuc_timings *) malloc (sizeof (cuc_timings) * cnt));
 
       cnt = 0;
-      for (list = main_list; list; list = list->next)
+      for (list = sim->main_list; list; list = list->next)
 	if (!list->dead && REF_BB (list->ref) == b)
 	  {
 	    cuc_shared_list *l = list;
@@ -1824,7 +1820,7 @@ csm (cuc_func * f)
 	    f->bb[b].tim[cnt].new_time =
 	      timings.new_time + f->bb[b].cnt * (list->cnt - 1);
 	    f->bb[b].tim[cnt].size =
-	      timings.size + list->cmovs * ii_size (II_CMOV,
+	      timings.size + list->cmovs * ii_size (sim, II_CMOV,
 						    0) * (list->cnt - 1) +
 	      list->size - list->osize;
 	    cnt++;
@@ -1834,7 +1830,7 @@ csm (cuc_func * f)
 
 /* Recursive function for searching through instruction graph */
 static void
-search_csm (int iter, cuc_func * f, cuc_shared_list * list)
+search_csm (or1ksim *sim, int iter, cuc_func * f, cuc_shared_list * list)
 {
   int b, i, j, i1;
   cuc_shared_list *l;
@@ -1851,7 +1847,7 @@ search_csm (int iter, cuc_func * f, cuc_shared_list * list)
 	/* Mark neighbours */
 	for (i1 = 0; i1 < f->bb[b].ninsn; i1++)
 	  {
-	    if (iteration[i1] == iter && f->bb[b].insn[i1].opt[j] & OPT_REF)
+	    if (sim->iteration[i1] == iter && f->bb[b].insn[i1].opt[j] & OPT_REF)
 	      {
 		int t2 = f->bb[b].insn[i1].op[j];
 		if (f->INSN (t).index == f->INSN (t2).index
@@ -1859,7 +1855,7 @@ search_csm (int iter, cuc_func * f, cuc_shared_list * list)
 		  {
 		    int j2;
 		    int ok = 1;
-		    iteration[REF_I (t2)] = iter + 1;
+		    sim->iteration[REF_I (t2)] = iter + 1;
 		    for (j2 = 0; j2 < MAX_OPERANDS; j2++)
 		      if (!(f->bb[b].insn[i1].opt[j2] & OPT_REF))
 			if (f->bb[b].insn[i1].opt[j2] !=
@@ -1873,12 +1869,12 @@ search_csm (int iter, cuc_func * f, cuc_shared_list * list)
 		    if (ok)
 		      {
 			cntc++;
-			sizec = sizec + insn_size (&f->bb[b].insn[i1]);
+			sizec = sizec + insn_size (sim, &f->bb[b].insn[i1]);
 		      }
 		    else
 		      {
 			cnt++;
-			size = size + insn_size (&f->bb[b].insn[i1]);
+			size = size + insn_size (sim, &f->bb[b].insn[i1]);
 		      }
 		  }
 	      }
@@ -1888,43 +1884,43 @@ search_csm (int iter, cuc_func * f, cuc_shared_list * list)
 	  {
 	    assert (l =
 		    (cuc_shared_list *) malloc (sizeof (cuc_shared_list)));
-	    l->next = main_list;
-	    main_list = l;
+	    l->next = sim->main_list;
+	    sim->main_list = l;
 	    l->from = list;
 	    l->ref = t;
 	    l->cnt = cnt;
 	    l->cmatch = 1;
 	    l->cmovs = list->cmovs + count_cmovs (&f->bb[b].insn[i], 1) - 1;
-	    l->size = list->size + ii_size (f->bb[b].insn[i].index, 1);
+	    l->size = list->size + ii_size (sim, f->bb[b].insn[i].index, 1);
 	    l->osize = sizec;
-	    search_csm (iter + 1, f, l);
+	    search_csm (sim, iter + 1, f, l);
 	  }
 	if (cnt > 1)
 	  {
 	    assert (l =
 		    (cuc_shared_list *) malloc (sizeof (cuc_shared_list)));
-	    l->next = main_list;
-	    main_list = l;
+	    l->next = sim->main_list;
+	    sim->main_list = l;
 	    l->from = list;
 	    l->ref = t;
 	    l->cnt = cnt + cntc;
 	    l->cmatch = 0;
 	    l->osize = size + sizec;
 	    l->cmovs = list->cmovs + count_cmovs (&f->bb[b].insn[i], 0) - 1;
-	    l->size = list->size + ii_size (f->bb[b].insn[i].index, 0);
-	    search_csm (iter + 1, f, l);
+	    l->size = list->size + ii_size (sim, f->bb[b].insn[i].index, 0);
+	    search_csm (sim, iter + 1, f, l);
 	  }
 
 	/* Unmark them back */
 	for (i1 = 0; i1 < f->bb[b].ninsn; i1++)
-	  if (iteration[i1] > iter)
-	    iteration[i1] = -1;
+	  if (sim->iteration[i1] > iter)
+	    sim->iteration[i1] = -1;
       }
 }
 
 /* Displays shared instructions */
 void
-print_shared (cuc_func * rf, cuc_shared_item * shared, int nshared)
+print_shared (or1ksim *sim, cuc_func * rf, cuc_shared_item * shared, int nshared)
 {
   int i, first = 1;
   for (i = 0; i < nshared; i++)
@@ -1942,12 +1938,12 @@ print_shared (cuc_func * rf, cuc_shared_item * shared, int nshared)
    we are going to share, but we are going to do this on whole function, not just one BB.
    We can find sequence in reference function, as pointed from "shared" */
 void
-csm_gen (cuc_func * f, cuc_func * rf, cuc_shared_item * shared, int nshared)
+csm_gen (or1ksim *sim, cuc_func * f, cuc_func * rf, cuc_shared_item * shared, int nshared)
 {
   int b, i, cnt = 0;
   /* FIXME: some code here (2) */
   PRINTF ("Replacing: ");
-  print_shared (rf, shared, nshared);
+  print_shared (sim, rf, shared, nshared);
 
   for (b = 0; b < f->num_bb; b++)
     for (i = 0; i < f->bb[b].ninsn; i++)

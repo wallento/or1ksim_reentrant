@@ -66,7 +66,7 @@ static int   tcp_write (void       *data,
 			int         size);
 
 /*! Data structure holding all the operations for a TCP/IP channel */
-struct channel_ops  tcp_channel_ops = {
+const struct channel_ops  tcp_channel_ops = {
 	.init  = tcp_init,
 	.open  = tcp_open,
 	.close = generic_close,

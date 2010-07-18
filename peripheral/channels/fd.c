@@ -50,7 +50,7 @@ static char *fd_status (void *data);
 
 /*! Global data structure representing the operations for communicating
   through a file descriptor channel */
-struct channel_ops  fd_channel_ops = {
+const struct channel_ops  fd_channel_ops = {
 	.init   = fd_init,
 	.open   = generic_open,
 	.close  = generic_close,

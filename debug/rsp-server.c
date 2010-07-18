@@ -1,6 +1,7 @@
 /* rsp-server.c -- Remote Serial Protocol server for GDB
 
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
 
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
 
@@ -50,13 +51,14 @@
 #include "debug-unit.h"
 #include "sprs.h"
 #include "toplevel-support.h"
+#include "siminstance.h"
 
 
 /* Define to log each packet */
 /* #define RSP_TRACE  1 */
 
 /*! Name of the Or1ksim RSP service */
-#define OR1KSIM_RSP_SERVICE  "or1ksim-rsp"
+#define OR1KSIM_RSP_SERVICE  "or1ksim-sim->rsp"
 
 /*! Protocol used by Or1ksim */
 #define OR1KSIM_RSP_PROTOCOL  "tcp"
@@ -97,9 +99,6 @@ enum target_signal {
     for register packets */
 #define GDB_BUF_MAX  ((NUM_REGS) * 8 + 1)
 
-/*! Size of the matchpoint hash table. Largest prime < 2^10 */
-#define MP_HASH_SIZE  1021
-
 /*! String to map hex digits to chars */
 static const char hexchars[]="0123456789abcdef";
 
@@ -130,35 +129,24 @@ struct mp_entry
   struct mp_entry   *next;		/*!< Next entry with this hash */
 };
 
-/*! Central data for the RSP connection */
-static struct
-{
-  int                client_waiting;	/*!< Is client waiting a response? */
-  int                proto_num;		/*!< Number of the protocol used */
-  int                client_fd;		/*!< FD for talking to GDB */
-  int                sigval;		/*!< GDB signal for any exception */
-  unsigned long int  start_addr;	/*!< Start of last run */
-  struct mp_entry   *mp_hash[MP_HASH_SIZE];	/*!< Matchpoint hash table */
-} rsp;
-
 /* Forward declarations of static functions */
 static void               rsp_get_client ();
 static void               rsp_client_request ();
 static void               rsp_client_close ();
-static void               put_packet (struct rsp_buf *buf);
-static void               put_str_packet (const char *str);
+static void               put_packet (or1ksim *sim, struct rsp_buf *buf);
+static void               put_str_packet (or1ksim *sim, const char *str);
 static struct rsp_buf    *get_packet ();
-static void               put_rsp_char (char  c);
+static void               put_rsp_char (or1ksim *sim, char  c);
 static int                get_rsp_char ();
 static int                rsp_unescape (char *data,
 					int   len);
 static void               mp_hash_init ();
-static void               mp_hash_add (enum mp_type       type,
+static void               mp_hash_add (or1ksim *sim, enum mp_type       type,
 				       unsigned long int  addr,
 				       unsigned long int  instr);
-static struct mp_entry   *mp_hash_lookup (enum mp_type       type,
+static struct mp_entry   *mp_hash_lookup (or1ksim *sim, enum mp_type       type,
 					  unsigned long int  addr);
-static struct mp_entry   *mp_hash_delete (enum mp_type       type,
+static struct mp_entry   *mp_hash_delete (or1ksim *sim, enum mp_type       type,
 					  unsigned long int  addr);
 static int                hex (int  c);
 static void               reg2hex (unsigned long int  val,
@@ -168,30 +156,30 @@ static void               ascii2hex (char *dest,
 				     char *src);
 static void               hex2ascii (char *dest,
 				     char *src);
-static void               set_npc (unsigned long int  addr);
-static void               rsp_report_exception ();
-static void               rsp_continue (struct rsp_buf *buf);
-static void               rsp_continue_with_signal (struct rsp_buf *buf);
-static void               rsp_continue_generic (unsigned long int  addr,
+static void               set_npc (or1ksim *sim, unsigned long int  addr);
+static void               rsp_report_exception (or1ksim *sim);
+static void               rsp_continue (or1ksim *sim, struct rsp_buf *buf);
+static void               rsp_continue_with_signal (or1ksim *sim, struct rsp_buf *buf);
+static void               rsp_continue_generic (or1ksim *sim, unsigned long int  addr,
 						unsigned long int  except);
-static void               rsp_read_all_regs ();
-static void               rsp_write_all_regs (struct rsp_buf *buf);
-static void               rsp_read_mem (struct rsp_buf *buf);
-static void               rsp_write_mem (struct rsp_buf *buf);
-static void               rsp_read_reg (struct rsp_buf *buf);
-static void               rsp_write_reg (struct rsp_buf *buf);
-static void               rsp_query (struct rsp_buf *buf);
-static void               rsp_command (struct rsp_buf *buf);
-static void               rsp_set (struct rsp_buf *buf);
-static void               rsp_restart ();
-static void               rsp_step (struct rsp_buf *buf);
-static void               rsp_step_with_signal (struct rsp_buf *buf);
-static void               rsp_step_generic (unsigned long int  addr,
+static void               rsp_read_all_regs (or1ksim *sim);
+static void               rsp_write_all_regs (or1ksim *sim, struct rsp_buf *buf);
+static void               rsp_read_mem (or1ksim *sim,struct rsp_buf *buf);
+static void               rsp_write_mem (or1ksim *sim, struct rsp_buf *buf);
+static void               rsp_read_reg (or1ksim *sim, struct rsp_buf *buf);
+static void               rsp_write_reg (or1ksim *sim, struct rsp_buf *buf);
+static void               rsp_query (or1ksim *sim, struct rsp_buf *buf);
+static void               rsp_command (or1ksim *sim, struct rsp_buf *buf);
+static void               rsp_set (or1ksim *sim, struct rsp_buf *buf);
+static void               rsp_restart (or1ksim *sim);
+static void               rsp_step (or1ksim *sim, struct rsp_buf *buf);
+static void               rsp_step_with_signal (or1ksim *sim, struct rsp_buf *buf);
+static void               rsp_step_generic (or1ksim *sim, unsigned long int  addr,
 					    unsigned long int  except);
-static void               rsp_vpkt (struct rsp_buf *buf);
-static void               rsp_write_mem_bin (struct rsp_buf *buf);
-static void               rsp_remove_matchpoint (struct rsp_buf *buf);
-static void               rsp_insert_matchpoint (struct rsp_buf *buf);
+static void               rsp_vpkt (or1ksim *sim, struct rsp_buf *buf);
+static void               rsp_write_mem_bin (or1ksim *sim, struct rsp_buf *buf);
+static void               rsp_remove_matchpoint (or1ksim *sim, struct rsp_buf *buf);
+static void               rsp_insert_matchpoint (or1ksim *sim, struct rsp_buf *buf);
 
 
 /*---------------------------------------------------------------------------*/
@@ -200,13 +188,13 @@ static void               rsp_insert_matchpoint (struct rsp_buf *buf);
    Set up the central data structures.                                       */
 /*---------------------------------------------------------------------------*/
 void
-rsp_init ()
+rsp_init (or1ksim *sim)
 {
   /* Clear out the central data structure */
-  rsp.client_waiting =  0;		/* GDB client is not waiting for us */
-  rsp.client_fd      = -1;		/* i.e. invalid */
-  rsp.sigval         =  0;		/* No exception */
-  rsp.start_addr     = EXCEPT_RESET;	/* Default restart point */
+  sim->rsp.client_waiting =  0;		/* GDB client is not waiting for us */
+  sim->rsp.client_fd      = -1;		/* i.e. invalid */
+  sim->rsp.sigval         =  0;		/* No exception */
+  sim->rsp.start_addr     = EXCEPT_RESET;	/* Default restart point */
 
   /* Set up the matchpoint hash table */
   mp_hash_init ();
@@ -230,27 +218,27 @@ rsp_init ()
    The next client request is then processed.                                */
 /*---------------------------------------------------------------------------*/
 void
-handle_rsp ()
+handle_rsp (or1ksim *sim)
 {
   /* If we have no RSP client, wait until we get one. */
-  while (-1 == rsp.client_fd)
+  while (-1 == sim->rsp.client_fd)
     {
       rsp_get_client ();
-      rsp.client_waiting = 0;		/* No longer waiting */
+      sim->rsp.client_waiting = 0;		/* No longer waiting */
     }
 
   /* If we have an unacknowledged exception tell the GDB client. If this
      exception was a trap due to a memory breakpoint, then adjust the NPC. */
-  if (rsp.client_waiting)
+  if (sim->rsp.client_waiting)
     {
-      if ((TARGET_SIGNAL_TRAP == rsp.sigval) &&
-	  (NULL != mp_hash_lookup (BP_MEMORY, cpu_state.sprs[SPR_PPC])))
+      if ((TARGET_SIGNAL_TRAP == sim->rsp.sigval) &&
+	  (NULL != mp_hash_lookup (sim, BP_MEMORY, sim->cpu_state.sprs[SPR_PPC])))
 	{
-	  set_npc (cpu_state.sprs[SPR_PPC]);
+	  set_npc (sim, sim->cpu_state.sprs[SPR_PPC]);
 	}
 
-      rsp_report_exception();
-      rsp.client_waiting = 0;		/* No longer waiting */
+      rsp_report_exception(sim);
+      sim->rsp.client_waiting = 0;		/* No longer waiting */
     }
 
   /* Get a RSP client request */
@@ -272,7 +260,7 @@ handle_rsp ()
    @param[in] except  The exception (Or1ksim form)                           */
 /*---------------------------------------------------------------------------*/
 void
-rsp_exception (unsigned long int  except)
+rsp_exception (or1ksim *sim, unsigned long int  except)
 {
   int  sigval;			/* GDB signal equivalent to exception */
 
@@ -298,13 +286,13 @@ rsp_exception (unsigned long int  except)
       return;
     }
 
-  if ((0 != rsp.sigval) && (sigval != rsp.sigval))
+  if ((0 != sim->rsp.sigval) && (sigval != sim->rsp.sigval))
     {
       fprintf (stderr, "Warning: RSP signal %d received while signal "
-	       "%d pending: Pending exception replaced\n", sigval, rsp.sigval);
+	       "%d pending: Pending exception replaced\n", sigval, sim->rsp.sigval);
     }
 
-  rsp.sigval         = sigval;		/* Save the signal value */
+  sim->rsp.sigval         = sigval;		/* Save the signal value */
 
 }	/* rsp_exception () */
 
@@ -327,7 +315,7 @@ rsp_exception (unsigned long int  except)
    The protocol used for communication is specified in OR1KSIM_RSP_PROTOCOL. */
 /*---------------------------------------------------------------------------*/
 static void
-rsp_get_client ()
+rsp_get_client (or1ksim *sim)
 {
   int                 tmp_fd;		/* Temporary descriptor for socket */
   int                 optval;		/* Socket options */
@@ -336,7 +324,7 @@ rsp_get_client ()
 
   /* 0 is used as the RSP port number to indicate that we should use the
      service name instead. */
-  if (0 == config.debug.rsp_port)
+  if (0 == sim->config.debug.rsp_port)
     {
       struct servent *service =
 	getservbyname (OR1KSIM_RSP_SERVICE, "tcp");
@@ -348,7 +336,7 @@ rsp_get_client ()
 	  return;
 	}
 
-      config.debug.rsp_port = ntohs (service->s_port);
+      sim->config.debug.rsp_port = ntohs (service->s_port);
     }
 
   /* Open a socket on which we'll listen for clients */
@@ -356,7 +344,7 @@ rsp_get_client ()
   if (tmp_fd < 0)
     {
       fprintf (stderr, "ERROR: Cannot open RSP socket\n");
-      sim_done ();
+      sim_done (sim);
     }
 
   /* Allow rapid reuse of the port on this socket */
@@ -366,28 +354,28 @@ rsp_get_client ()
 
   /* Bind the port to the socket */
   sock_addr.sin_family      = PF_INET;
-  sock_addr.sin_port        = htons (config.debug.rsp_port);
+  sock_addr.sin_port        = htons (sim->config.debug.rsp_port);
   sock_addr.sin_addr.s_addr = INADDR_ANY;
   if (bind (tmp_fd, (struct sockaddr *) &sock_addr, sizeof (sock_addr)))
     {
       fprintf (stderr, "ERROR: Cannot bind to RSP socket\n");
-      sim_done ();
+      sim_done (sim);
     }
-      
+
   /* Listen for (at most one) client */
   if (listen (tmp_fd, 1))
     {
       fprintf (stderr, "ERROR: Cannot listen on RSP socket\n");
-      sim_done ();
+      sim_done (sim);
     }
 
-  printf ("Listening for RSP on port %d\n", config.debug.rsp_port);
+  printf ("Listening for RSP on port %d\n", sim->config.debug.rsp_port);
   fflush (stdout);
 
   /* Accept a client which connects */
-  rsp.client_fd = accept (tmp_fd, (struct sockaddr *)&sock_addr, &len);
+  sim->rsp.client_fd = accept (tmp_fd, (struct sockaddr *)&sock_addr, &len);
 
-  if (-1 == rsp.client_fd)
+  if (-1 == sim->rsp.client_fd)
     {
       fprintf (stderr, "Warning: Failed to accept RSP client\n");
       return;
@@ -395,13 +383,13 @@ rsp_get_client ()
 
   /* Enable TCP keep alive process */
   optval = 1;
-  setsockopt (rsp.client_fd, SOL_SOCKET, SO_KEEPALIVE, (char *)&optval,
+  setsockopt (sim->rsp.client_fd, SOL_SOCKET, SO_KEEPALIVE, (char *)&optval,
 	      sizeof (optval));
 
   /* Don't delay small packets, for better interactive response (disable
      Nagel's algorithm) */
   optval = 1;
-  setsockopt (rsp.client_fd, IPPROTO_TCP, TCP_NODELAY, (char *)&optval,
+  setsockopt (sim->rsp.client_fd, IPPROTO_TCP, TCP_NODELAY, (char *)&optval,
 	      sizeof (optval));
 
   /* Socket is no longer needed */
@@ -429,7 +417,7 @@ rsp_get_client ()
    other functions to implement the functionality.                           */
 /*---------------------------------------------------------------------------*/
 static void
-rsp_client_request ()
+rsp_client_request (or1ksim *sim)
 {
   struct rsp_buf *buf = get_packet ();	/* Message sent to us */
 
@@ -450,18 +438,18 @@ rsp_client_request ()
     {
     case '!':
       /* Request for extended remote mode */
-      put_str_packet ("OK");
+      put_str_packet (sim, "OK");
       return;
 
     case '?':
       /* Return last signal ID */
-      rsp_report_exception();
+      rsp_report_exception(sim);
       return;
 
     case 'A':
       /* Initialization of argv not supported */
       fprintf (stderr, "Warning: RSP 'A' packet not supported: ignored\n");
-      put_str_packet ("E01");
+      put_str_packet (sim, "E01");
       return;
 
     case 'b':
@@ -478,12 +466,12 @@ rsp_client_request ()
 
     case 'c':
       /* Continue */
-      rsp_continue (buf);
+      rsp_continue (sim, buf);
       return;
 
     case 'C':
       /* Continue with signal */
-      rsp_continue_with_signal (buf);
+      rsp_continue_with_signal (sim, buf);
       return;
 
     case 'd':
@@ -497,10 +485,10 @@ rsp_client_request ()
 	 execution should continue. TODO. Is this really then intended
 	 meaning? Or does it just mean that only vAttach will be recognized
 	 after this? */
-      put_str_packet ("OK");
+      put_str_packet (sim, "OK");
       rsp_client_close ();
-      set_stall_state (0);
-      rsp.sigval = TARGET_SIGNAL_NONE;	/* No signal now */
+      set_stall_state (sim, 0);
+      sim->rsp.sigval = TARGET_SIGNAL_NONE;	/* No signal now */
       return;
 
     case 'F':
@@ -510,31 +498,31 @@ rsp_client_request ()
       return;
 
     case 'g':
-      rsp_read_all_regs ();
+      rsp_read_all_regs (sim);
       return;
 
     case 'G':
-      rsp_write_all_regs (buf);
+      rsp_write_all_regs (sim, buf);
       return;
-      
+
     case 'H':
       /* Set the thread number of subsequent operations. For now ignore
 	 silently and just reply "OK" */
-      put_str_packet ("OK");
+      put_str_packet (sim, "OK");
       return;
 
     case 'i':
       /* Single instruction step */
       fprintf (stderr, "Warning: RSP cycle stepping not supported: target "
 	       "stopped immediately\n");
-      rsp.client_waiting = 1;			/* Stop reply will be sent */
+      sim->rsp.client_waiting = 1;			/* Stop reply will be sent */
       return;
 
     case 'I':
       /* Single instruction step with signal */
       fprintf (stderr, "Warning: RSP cycle stepping not supported: target "
 	       "stopped immediately\n");
-      rsp.client_waiting = 1;			/* Stop reply will be sent */
+      sim->rsp.client_waiting = 1;			/* Stop reply will be sent */
       return;
 
     case 'k':
@@ -543,32 +531,32 @@ rsp_client_request ()
 
     case 'm':
       /* Read memory (symbolic) */
-      rsp_read_mem (buf);
+      rsp_read_mem (sim, buf);
       return;
 
     case 'M':
       /* Write memory (symbolic) */
-      rsp_write_mem (buf);
+      rsp_write_mem (sim, buf);
       return;
 
     case 'p':
       /* Read a register */
-      rsp_read_reg (buf);
+      rsp_read_reg (sim, buf);
       return;
 
     case 'P':
       /* Write a register */
-      rsp_write_reg (buf);
+      rsp_write_reg (sim, buf);
       return;
 
     case 'q':
       /* Any one of a number of query packets */
-      rsp_query (buf);
+      rsp_query (sim, buf);
       return;
 
     case 'Q':
       /* Any one of a number of set packets */
-      rsp_set (buf);
+      rsp_set (sim, buf);
       return;
 
     case 'r':
@@ -579,19 +567,19 @@ rsp_client_request ()
 
     case 'R':
       /* Restart the program being debugged. */
-      rsp_restart ();
+      rsp_restart (sim);
       return;
 
     case 's':
       /* Single step (one high level instruction). This could be hard without
 	 DWARF2 info */
-      rsp_step (buf);
+      rsp_step (sim, buf);
       return;
 
     case 'S':
       /* Single step (one high level instruction) with signal. This could be
 	 hard without DWARF2 info */
-      rsp_step_with_signal (buf);
+      rsp_step_with_signal (sim, buf);
       return;
 
     case 't':
@@ -603,27 +591,27 @@ rsp_client_request ()
     case 'T':
       /* Is the thread alive. We are bare metal, so don't have a thread
 	 context. The answer is always "OK". */
-      put_str_packet ("OK");
+      put_str_packet (sim, "OK");
       return;
 
     case 'v':
       /* Any one of a number of packets to control execution */
-      rsp_vpkt (buf);
+      rsp_vpkt (sim, buf);
       return;
 
     case 'X':
       /* Write memory (binary) */
-      rsp_write_mem_bin (buf);
+      rsp_write_mem_bin (sim, buf);
       return;
 
     case 'z':
       /* Remove a breakpoint/watchpoint. */
-      rsp_remove_matchpoint (buf);
+      rsp_remove_matchpoint (sim, buf);
       return;
 
     case 'Z':
       /* Insert a breakpoint/watchpoint. */
-      rsp_insert_matchpoint (buf);
+      rsp_insert_matchpoint (sim, buf);
       return;
 
     default:
@@ -638,12 +626,12 @@ rsp_client_request ()
 /*!Close the connection to the client if it is open                          */
 /*---------------------------------------------------------------------------*/
 static void
-rsp_client_close ()
+rsp_client_close (or1ksim *sim)
 {
-  if (-1 != rsp.client_fd)
+  if (-1 != sim->rsp.client_fd)
     {
-      close (rsp.client_fd);
-      rsp.client_fd = -1;
+      close (sim->rsp.client_fd);
+      sim->rsp.client_fd = -1;
     }
 }	/* rsp_client_close () */
 
@@ -659,7 +647,7 @@ rsp_client_close ()
    @param[in] buf  The data to send                                          */
 /*---------------------------------------------------------------------------*/
 static void
-put_packet (struct rsp_buf *buf)
+put_packet (or1ksim *sim, struct rsp_buf *buf)
 {
   int  ch;				/* Ack char */
 
@@ -675,7 +663,7 @@ put_packet (struct rsp_buf *buf)
       fflush (stdout);
 #endif
 
-      put_rsp_char ('$');		/* Start char */
+      put_rsp_char (sim, '$');		/* Start char */
 
       /* Body of the packet */
       for (count = 0; count < buf->len; count++)
@@ -687,18 +675,18 @@ put_packet (struct rsp_buf *buf)
 	    {
 	      ch       ^= 0x20;
 	      checksum += (unsigned char)'}';
-	      put_rsp_char ('}');
+	      put_rsp_char (sim, '}');
 	    }
 
 	  checksum += ch;
-	  put_rsp_char (ch);
+	  put_rsp_char (sim, ch);
 	}
 
-      put_rsp_char ('#');		/* End char */
+      put_rsp_char (sim, '#');		/* End char */
 
       /* Computed checksum */
-      put_rsp_char (hexchars[checksum >> 4]);
-      put_rsp_char (hexchars[checksum % 16]);
+      put_rsp_char (sim, hexchars[checksum >> 4]);
+      put_rsp_char (sim, hexchars[checksum % 16]);
 
       /* Check for ack of connection failure */
       ch = get_rsp_char ();
@@ -718,7 +706,7 @@ put_packet (struct rsp_buf *buf)
    param[in] str  The text of the packet                                     */
 /*---------------------------------------------------------------------------*/
 static void
-put_str_packet (const char *str)
+put_str_packet (or1ksim *sim, const char *str)
 {
   struct rsp_buf  buf;
   int             len = strlen (str);
@@ -737,14 +725,14 @@ put_str_packet (const char *str)
   buf.data[len] = 0;
   buf.len       = len;
 
-  put_packet (&buf);
+  put_packet (sim, &buf);
 
 }	/* put_str_packet () */
 
 
 /*---------------------------------------------------------------------------*/
 /*!Get a packet from the GDB client
-  
+
    Modeled on the stub version supplied with GDB. The data is in a static
    buffer. The data should be copied elsewhere if it is to be preserved across
    a subsequent call to get_packet().
@@ -757,7 +745,7 @@ put_str_packet (const char *str)
    @return  A pointer to the static buffer containing the data                */
 /*---------------------------------------------------------------------------*/
 static struct rsp_buf *
-get_packet ()
+get_packet (or1ksim *sim)
 {
   static struct rsp_buf  buf;		/* Survives the return */
 
@@ -848,11 +836,11 @@ get_packet ()
 	      fprintf (stderr, "Warning: Bad RSP checksum: Computed "
 		       "0x%02x, received 0x%02x\n", checksum, xmitcsum);
 
-	      put_rsp_char ('-');	/* Failed checksum */
+	      put_rsp_char (sim, '-');	/* Failed checksum */
 	    }
 	  else
 	    {
-	      put_rsp_char ('+');	/* successful transfer */
+	      put_rsp_char (sim, '+');	/* successful transfer */
 	      break;
 	    }
 	}
@@ -875,9 +863,9 @@ get_packet ()
    @param[in] c  The character to put out                                    */
 /*---------------------------------------------------------------------------*/
 static void
-put_rsp_char (char  c)
+put_rsp_char (or1ksim *sim, char  c)
 {
-  if (-1 == rsp.client_fd)
+  if (-1 == sim->rsp.client_fd)
     {
       fprintf (stderr, "Warning: Attempt to write '%c' to unopened RSP "
 	       "client: Ignored\n", c);
@@ -888,7 +876,7 @@ put_rsp_char (char  c)
      failure. */
   while (1)
     {
-      switch (write (rsp.client_fd, &c, sizeof (c)))
+      switch (write (sim->rsp.client_fd, &c, sizeof (c)))
 	{
 	case -1:
 	  /* Error: only allow interrupts or would block */
@@ -897,10 +885,10 @@ put_rsp_char (char  c)
 	      fprintf (stderr, "Warning: Failed to write to RSP client: "
 		       "Closing client connection: %s\n",
 		       strerror (errno));
-	      rsp_client_close ();
+	      rsp_client_close (sim);
 	      return;
 	    }
-      
+
 	  break;
 
 	case 0:
@@ -921,9 +909,9 @@ put_rsp_char (char  c)
    @return  The character read, or -1 on failure                             */
 /*---------------------------------------------------------------------------*/
 static int
-get_rsp_char ()
+get_rsp_char (or1ksim *sim)
 {
-  if (-1 == rsp.client_fd)
+  if (-1 == sim->rsp.client_fd)
     {
       fprintf (stderr, "Warning: Attempt to read from unopened RSP "
 	       "client: Ignored\n");
@@ -936,7 +924,7 @@ get_rsp_char ()
     {
       unsigned char  c;
 
-      switch (read (rsp.client_fd, &c, sizeof (c)))
+      switch (read (sim->rsp.client_fd, &c, sizeof (c)))
 	{
 	case -1:
 	  /* Error: only allow interrupts */
@@ -945,7 +933,7 @@ get_rsp_char ()
 	      fprintf (stderr, "Warning: Failed to read from RSP client: "
 		       "Closing client connection: %s\n",
 		       strerror (errno));
-	      rsp_client_close ();
+	      rsp_client_close (sim);
 	      return  -1;
 	    }
 
@@ -953,7 +941,7 @@ get_rsp_char ()
 
 	case 0:
 	  // EOF
-	  rsp_client_close ();
+	  rsp_client_close (sim);
 	  return  -1;
 
 	default:
@@ -1011,13 +999,13 @@ rsp_unescape (char *data,
    NULL.                                                                     */
 /*---------------------------------------------------------------------------*/
 static void
-mp_hash_init ()
+mp_hash_init (or1ksim *sim)
 {
   int  i;
 
   for (i = 0; i < MP_HASH_SIZE; i++)
     {
-      rsp.mp_hash[i] = NULL;
+      sim->rsp.mp_hash[i] = NULL;
     }
 }	/* mp_hash_init () */
 
@@ -1035,7 +1023,7 @@ mp_hash_init ()
    @para[in]  instr  The instruction to associate with the address           */
 /*---------------------------------------------------------------------------*/
 static void
-mp_hash_add (enum mp_type       type,
+mp_hash_add (or1ksim *sim, enum mp_type       type,
 	     unsigned long int  addr,
 	     unsigned long int  instr)
 {
@@ -1043,7 +1031,7 @@ mp_hash_add (enum mp_type       type,
   struct mp_entry *curr;
 
   /* See if we already have the entry */
-  for(curr = rsp.mp_hash[hv]; NULL != curr; curr = curr->next)
+  for(curr = sim->rsp.mp_hash[hv]; NULL != curr; curr = curr->next)
     {
       if ((type == curr->type) && (addr == curr->addr))
 	{
@@ -1057,9 +1045,9 @@ mp_hash_add (enum mp_type       type,
   curr->type  = type;
   curr->addr  = addr;
   curr->instr = instr;
-  curr->next  = rsp.mp_hash[hv];
+  curr->next  = sim->rsp.mp_hash[hv];
 
-  rsp.mp_hash[hv] = curr;
+  sim->rsp.mp_hash[hv] = curr;
 
 }	/* mp_hash_add () */
 
@@ -1075,14 +1063,14 @@ mp_hash_add (enum mp_type       type,
    @return  The entry deleted, or NULL if the entry was not found            */
 /*---------------------------------------------------------------------------*/
 static struct mp_entry *
-mp_hash_lookup (enum mp_type       type,
+mp_hash_lookup (or1ksim *sim, enum mp_type       type,
 		unsigned long int  addr)
 {
   int              hv   = addr % MP_HASH_SIZE;
   struct mp_entry *curr;
 
   /* Search */
-  for (curr = rsp.mp_hash[hv]; NULL != curr; curr = curr->next)
+  for (curr = sim->rsp.mp_hash[hv]; NULL != curr; curr = curr->next)
     {
       if ((type == curr->type) && (addr == curr->addr))
 	{
@@ -1092,7 +1080,7 @@ mp_hash_lookup (enum mp_type       type,
 
   /* Not found */
   return  NULL;
-      
+
 }	/* mp_hash_lookup () */
 
 
@@ -1115,7 +1103,7 @@ mp_hash_lookup (enum mp_type       type,
    @return  The entry deleted, or NULL if the entry was not found            */
 /*---------------------------------------------------------------------------*/
 static struct mp_entry *
-mp_hash_delete (enum mp_type       type,
+mp_hash_delete (or1ksim *sim, enum mp_type       type,
 		unsigned long int  addr)
 {
   int              hv   = addr % MP_HASH_SIZE;
@@ -1123,7 +1111,7 @@ mp_hash_delete (enum mp_type       type,
   struct mp_entry *curr;
 
   /* Search */
-  for (curr  = rsp.mp_hash[hv]; NULL != curr; curr = curr->next)
+  for (curr  = sim->rsp.mp_hash[hv]; NULL != curr; curr = curr->next)
     {
       if ((type == curr->type) && (addr == curr->addr))
 	{
@@ -1131,7 +1119,7 @@ mp_hash_delete (enum mp_type       type,
 	     chain. */
 	  if (NULL == prev)
 	    {
-	      rsp.mp_hash[hv] = curr->next;
+	      sim->rsp.mp_hash[hv] = curr->next;
 	    }
 	  else
 	    {
@@ -1146,7 +1134,7 @@ mp_hash_delete (enum mp_type       type,
 
   /* Not found */
   return  NULL;
-      
+
 }	/* mp_hash_delete () */
 
 
@@ -1254,7 +1242,7 @@ static void  ascii2hex (char *dest,
     }
 
   dest[i * 2] = '\0';
-	
+
 }	/* ascii2hex () */
 
 
@@ -1286,7 +1274,7 @@ static void  hex2ascii (char *dest,
 /*!Set the program counter
 
    This sets the value in the NPC SPR. Not completely trivial, since this is
-   actually cached in cpu_state.pc. Any reset of the NPC also involves
+   actually cached in sim->cpu_state.pc. Any reset of the NPC also involves
    clearing the delay state and setting the pcnext global.
 
    Only actually do this if the requested address is different to the current
@@ -1295,13 +1283,13 @@ static void  hex2ascii (char *dest,
    @param[in] addr  The address to use                                       */
 /*---------------------------------------------------------------------------*/
 static void
-set_npc (unsigned long int  addr)
+set_npc (or1ksim *sim, unsigned long int  addr)
 {
-  if (cpu_state.pc != addr)
+  if (sim->cpu_state.pc != addr)
     {
-      cpu_state.pc         = addr;
-      cpu_state.delay_insn = 0;
-      pcnext               = addr + 4;
+      sim->cpu_state.pc         = addr;
+      sim->cpu_state.delay_insn = 0;
+      sim->pcnext               = addr + 4;
     }
 }	/* set_npc () */
 
@@ -1312,18 +1300,18 @@ set_npc (unsigned long int  addr)
    This is only called if there is a client FD to talk to                    */
 /*---------------------------------------------------------------------------*/
 static void
-rsp_report_exception ()
+rsp_report_exception (or1ksim *sim)
 {
   struct rsp_buf  buf;
 
   /* Construct a signal received packet */
   buf.data[0] = 'S';
-  buf.data[1] = hexchars[rsp.sigval >> 4];
-  buf.data[2] = hexchars[rsp.sigval % 16];
+  buf.data[1] = hexchars[sim->rsp.sigval >> 4];
+  buf.data[2] = hexchars[sim->rsp.sigval % 16];
   buf.data[3] = 0;
   buf.len     = strlen (buf.data);
 
-  put_packet (&buf);
+  put_packet (sim, &buf);
 
 }	/* rsp_report_exception () */
 
@@ -1337,23 +1325,23 @@ rsp_report_exception ()
    @param[in] buf  The full continue packet                                  */
 /*---------------------------------------------------------------------------*/
 static void
-rsp_continue (struct rsp_buf *buf)
+rsp_continue (or1ksim *sim, struct rsp_buf *buf)
 {
   unsigned long int  addr;		/* Address to continue from, if any */
 
   if (0 == strcmp ("c", buf->data))
     {
-      addr = cpu_state.pc;	/* Default uses current NPC */
+      addr = sim->cpu_state.pc;	/* Default uses current NPC */
     }
   else if (1 != sscanf (buf->data, "c%lx", &addr))
     {
       fprintf (stderr,
 	       "Warning: RSP continue address %s not recognized: ignored\n",
 	       buf->data);
-      addr = cpu_state.pc;	/* Default uses current NPC */
+      addr = sim->cpu_state.pc;	/* Default uses current NPC */
     }
 
-  rsp_continue_generic (addr, EXCEPT_NONE);
+  rsp_continue_generic (sim, addr, EXCEPT_NONE);
 
 }	/* rsp_continue () */
 
@@ -1366,7 +1354,7 @@ rsp_continue (struct rsp_buf *buf)
    @param[in] buf  The full continue with signal packet                      */
 /*---------------------------------------------------------------------------*/
 static void
-rsp_continue_with_signal (struct rsp_buf *buf)
+rsp_continue_with_signal (or1ksim *sim, struct rsp_buf *buf)
 {
   printf ("RSP continue with signal '%s' received\n", buf->data);
 
@@ -1386,30 +1374,30 @@ rsp_continue_with_signal (struct rsp_buf *buf)
    @param[in] except  The exception to use (if any)                          */
 /*---------------------------------------------------------------------------*/
 static void
-rsp_continue_generic (unsigned long int  addr,
+rsp_continue_generic (or1ksim *sim, unsigned long int  addr,
 		      unsigned long int  except)
 {
   /* Set the address as the value of the next program counter */
-  set_npc (addr);
+  set_npc (sim, addr);
 
   /* Clear Debug Reason Register and watchpoint break generation in Debug Mode
      Register 2 */
-  cpu_state.sprs[SPR_DRR]   = 0;
-  cpu_state.sprs[SPR_DMR2] &= ~SPR_DMR2_WGB;
+  sim->cpu_state.sprs[SPR_DRR]   = 0;
+  sim->cpu_state.sprs[SPR_DMR2] &= ~SPR_DMR2_WGB;
 
   /* Clear the single step trigger in Debug Mode Register 1 and set traps to be
      handled by the debug unit in the Debug Stop Register */
-  cpu_state.sprs[SPR_DMR1] &= ~SPR_DMR1_ST;
-  cpu_state.sprs[SPR_DSR]  |= SPR_DSR_TE;
+  sim->cpu_state.sprs[SPR_DMR1] &= ~SPR_DMR1_ST;
+  sim->cpu_state.sprs[SPR_DSR]  |= SPR_DSR_TE;
 
   /* Unstall the processor */
-  set_stall_state (0);
+  set_stall_state (sim, 0);
 
   /* Any signal is cleared. */
-  rsp.sigval = TARGET_SIGNAL_NONE;
+  sim->rsp.sigval = TARGET_SIGNAL_NONE;
 
   /* Note the GDB client is now waiting for a reply. */
-  rsp.client_waiting = 1;
+  sim->rsp.client_waiting = 1;
 
 }	/* rsp_continue_generic () */
 
@@ -1424,7 +1412,7 @@ rsp_continue_generic (unsigned long int  addr,
    Each byte is packed as a pair of hex digits.                              */
 /*---------------------------------------------------------------------------*/
 static void
-rsp_read_all_regs ()
+rsp_read_all_regs (or1ksim *sim)
 {
   struct rsp_buf  buf;			/* Buffer for the reply */
   int             r;			/* Register index */
@@ -1432,19 +1420,19 @@ rsp_read_all_regs ()
   /* The GPRs */
   for (r = 0; r < MAX_GPRS; r++)
     {
-      reg2hex (cpu_state.reg[r], &(buf.data[r * 8]));
+      reg2hex (sim->cpu_state.reg[r], &(buf.data[r * 8]));
     }
 
   /* PPC, NPC and SR */
-  reg2hex (cpu_state.sprs[SPR_PPC], &(buf.data[PPC_REGNUM * 8]));
-  reg2hex (cpu_state.pc,            &(buf.data[NPC_REGNUM * 8]));
-  reg2hex (cpu_state.sprs[SPR_SR],  &(buf.data[SR_REGNUM  * 8]));
+  reg2hex (sim->cpu_state.sprs[SPR_PPC], &(buf.data[PPC_REGNUM * 8]));
+  reg2hex (sim->cpu_state.pc,            &(buf.data[NPC_REGNUM * 8]));
+  reg2hex (sim->cpu_state.sprs[SPR_SR],  &(buf.data[SR_REGNUM  * 8]));
 
   /* Finalize the packet and send it */
   buf.data[NUM_REGS * 8] = 0;
   buf.len                = NUM_REGS * 8;
 
-  put_packet (&buf);
+  put_packet (sim, &buf);
 
 }	/* rsp_read_all_regs () */
 
@@ -1465,24 +1453,24 @@ rsp_read_all_regs ()
    @param[in] buf  The original packet request.                              */
 /*---------------------------------------------------------------------------*/
 static void
-rsp_write_all_regs (struct rsp_buf *buf)
+rsp_write_all_regs (or1ksim *sim, struct rsp_buf *buf)
 {
   int             r;			/* Register index */
 
   /* The GPRs */
   for (r = 0; r < MAX_GPRS; r++)
     {
-      cpu_state.reg[r] = hex2reg (&(buf->data[r * 8]));
+      sim->cpu_state.reg[r] = hex2reg (&(buf->data[r * 8]));
     }
 
   /* PPC, NPC and SR */
-  cpu_state.sprs[SPR_PPC] = hex2reg (&(buf->data[PPC_REGNUM * 8]));
-  cpu_state.sprs[SPR_SR]  = hex2reg (&(buf->data[SR_REGNUM  * 8]));
-  set_npc (hex2reg (&(buf->data[NPC_REGNUM * 8])));
+  sim->cpu_state.sprs[SPR_PPC] = hex2reg (&(buf->data[PPC_REGNUM * 8]));
+  sim->cpu_state.sprs[SPR_SR]  = hex2reg (&(buf->data[SR_REGNUM  * 8]));
+  set_npc (sim, hex2reg (&(buf->data[NPC_REGNUM * 8])));
 
   /* Acknowledge. TODO: We always succeed at present, even if the data was
      defective. */
-  put_str_packet ("OK");
+  put_str_packet (sim, "OK");
 
 }	/* rsp_write_all_regs () */
 
@@ -1504,7 +1492,7 @@ rsp_write_all_regs (struct rsp_buf *buf)
    @param[in] buf  The command received                                      */
 /*---------------------------------------------------------------------------*/
 static void
-rsp_read_mem (struct rsp_buf *buf)
+rsp_read_mem (or1ksim *sim, struct rsp_buf *buf)
 {
   unsigned int    addr;			/* Where to read the memory */
   int             len;			/* Number of bytes to read */
@@ -1514,7 +1502,7 @@ rsp_read_mem (struct rsp_buf *buf)
     {
       fprintf (stderr, "Warning: Failed to recognize RSP read memory "
 	       "command: %s\n", buf->data);
-      put_str_packet ("E01");
+      put_str_packet (sim, "E01");
       return;
     }
 
@@ -1532,16 +1520,16 @@ rsp_read_mem (struct rsp_buf *buf)
       unsigned char  ch;		/* The byte at the address */
 
       /* Check memory area is valid */
-      if (NULL == verify_memoryarea (addr + off))
+      if (NULL == verify_memoryarea (sim, addr + off))
 	{
 	  /* The error number doesn't matter. The GDB client will substitute
 	     its own */
-	  put_str_packet ("E01");
+	  put_str_packet (sim, "E01");
 	  return;
 	}
 
       // Get the memory direct - no translation.
-      ch = eval_direct8 (addr + off, 0, 0);
+      ch = eval_direct8 (sim, addr + off, 0, 0);
 
       buf->data[off * 2]     = hexchars[ch >>   4];
       buf->data[off * 2 + 1] = hexchars[ch &  0xf];
@@ -1549,7 +1537,7 @@ rsp_read_mem (struct rsp_buf *buf)
 
   buf->data[off * 2] = 0;			/* End of string */
   buf->len           = strlen (buf->data);
-  put_packet (buf);
+  put_packet (sim, buf);
 
 }	/* rsp_read_mem () */
 
@@ -1571,7 +1559,7 @@ rsp_read_mem (struct rsp_buf *buf)
    @param[in] buf  The command received                                      */
 /*---------------------------------------------------------------------------*/
 static void
-rsp_write_mem (struct rsp_buf *buf)
+rsp_write_mem (or1ksim *sim, struct rsp_buf *buf)
 {
   unsigned int    addr;			/* Where to write the memory */
   int             len;			/* Number of bytes to write */
@@ -1583,7 +1571,7 @@ rsp_write_mem (struct rsp_buf *buf)
     {
       fprintf (stderr, "Warning: Failed to recognize RSP write memory "
 	       "command: %s\n", buf->data);
-      put_str_packet ("E01");
+      put_str_packet (sim, "E01");
       return;
     }
 
@@ -1596,18 +1584,18 @@ rsp_write_mem (struct rsp_buf *buf)
     {
       fprintf (stderr, "Warning: Write of %d digits requested, but %d digits "
 	       "supplied: packet ignored\n", len * 2, datlen );
-      put_str_packet ("E01");
+      put_str_packet (sim, "E01");
       return;
     }
 
   /* Write the bytes to memory */
   for (off = 0; off < len; off++)
     {
-      if (NULL == verify_memoryarea (addr + off))
+      if (NULL == verify_memoryarea (sim, addr + off))
 	{
 	  /* The error number doesn't matter. The GDB client will substitute
 	     its own */
-	  put_str_packet ("E01");
+	  put_str_packet (sim, "E01");
 	  return;
 	}
       else
@@ -1617,11 +1605,11 @@ rsp_write_mem (struct rsp_buf *buf)
 
 	  // circumvent the read-only check usually done for mem accesses
 	  // data is in host order, because that's what set_direct32 needs
-	  set_program8 (addr + off, (nyb1 << 4) | nyb2);
+	  set_program8 (sim, addr + off, (nyb1 << 4) | nyb2);
 	}
     }
 
-  put_str_packet ("OK");
+  put_str_packet (sim, "OK");
 
 }	/* rsp_write_mem () */
 
@@ -1638,7 +1626,7 @@ rsp_write_mem (struct rsp_buf *buf)
    @param[in] buf  The original packet request. Reused for the reply.        */
 /*---------------------------------------------------------------------------*/
 static void
-rsp_read_reg (struct rsp_buf *buf)
+rsp_read_reg (or1ksim *sim, struct rsp_buf *buf)
 {
   unsigned int  regnum;
 
@@ -1647,42 +1635,42 @@ rsp_read_reg (struct rsp_buf *buf)
     {
       fprintf (stderr, "Warning: Failed to recognize RSP read register "
 	       "command: %s\n", buf->data);
-      put_str_packet ("E01");
+      put_str_packet (sim, "E01");
       return;
     }
 
   /* Get the relevant register */
   if (regnum < MAX_GPRS)
     {
-      reg2hex (cpu_state.reg[regnum], buf->data);
+      reg2hex (sim->cpu_state.reg[regnum], buf->data);
     }
   else if (PPC_REGNUM == regnum)
     {
-      reg2hex (cpu_state.sprs[SPR_PPC], buf->data);
+      reg2hex (sim->cpu_state.sprs[SPR_PPC], buf->data);
     }
   else if (NPC_REGNUM == regnum)
     {
-      reg2hex (cpu_state.pc, buf->data);
+      reg2hex (sim->cpu_state.pc, buf->data);
     }
   else if (SR_REGNUM == regnum)
     {
-      reg2hex (cpu_state.sprs[SPR_SR], buf->data);
+      reg2hex (sim->cpu_state.sprs[SPR_SR], buf->data);
     }
   else
     {
       /* Error response if we don't know the register */
       fprintf (stderr, "Warning: Attempt to read unknown register 0x%x: "
 	       "ignored\n", regnum);
-      put_str_packet ("E01");
+      put_str_packet (sim, "E01");
       return;
     }
 
   buf->len = strlen (buf->data);
-  put_packet (buf);
+  put_packet (sim, buf);
 
 }	/* rsp_write_reg () */
 
-    
+
 /*---------------------------------------------------------------------------*/
 /*!Write a single register
 
@@ -1695,7 +1683,7 @@ rsp_read_reg (struct rsp_buf *buf)
    @param[in] buf  The original packet request.                              */
 /*---------------------------------------------------------------------------*/
 static void
-rsp_write_reg (struct rsp_buf *buf)
+rsp_write_reg (or1ksim *sim, struct rsp_buf *buf)
 {
   unsigned int  regnum;
   char          valstr[9];		/* Allow for EOS on the string */
@@ -1705,41 +1693,41 @@ rsp_write_reg (struct rsp_buf *buf)
     {
       fprintf (stderr, "Warning: Failed to recognize RSP write register "
 	       "command: %s\n", buf->data);
-      put_str_packet ("E01");
+      put_str_packet (sim, "E01");
       return;
     }
-  
+
   /* Set the relevant register */
   if (regnum < MAX_GPRS)
     {
-      cpu_state.reg[regnum] = hex2reg (valstr);
+      sim->cpu_state.reg[regnum] = hex2reg (valstr);
     }
   else if (PPC_REGNUM == regnum)
     {
-      cpu_state.sprs[SPR_PPC] = hex2reg (valstr);
+      sim->cpu_state.sprs[SPR_PPC] = hex2reg (valstr);
     }
   else if (NPC_REGNUM == regnum)
     {
-      set_npc (hex2reg (valstr));
+      set_npc (sim, hex2reg (valstr));
     }
   else if (SR_REGNUM == regnum)
     {
-      cpu_state.sprs[SPR_SR] = hex2reg (valstr);
+      sim->cpu_state.sprs[SPR_SR] = hex2reg (valstr);
     }
   else
     {
       /* Error response if we don't know the register */
       fprintf (stderr, "Warning: Attempt to write unknown register 0x%x: "
 	       "ignored\n", regnum);
-      put_str_packet ("E01");
+      put_str_packet (sim, "E01");
       return;
     }
 
-  put_str_packet ("OK");
+  put_str_packet (sim, "OK");
 
 }	/* rsp_write_reg () */
 
-    
+
 /*---------------------------------------------------------------------------*/
 /*!Handle a RSP query request
 
@@ -1747,7 +1735,7 @@ rsp_write_reg (struct rsp_buf *buf)
                    back.                                                     */
 /*---------------------------------------------------------------------------*/
 static void
-rsp_query (struct rsp_buf *buf)
+rsp_query (or1ksim *sim, struct rsp_buf *buf)
 {
   if (0 == strcmp ("qC", buf->data))
     {
@@ -1756,13 +1744,13 @@ rsp_query (struct rsp_buf *buf)
 	 OR1KSIM_TID to represent our single thread of control. */
       sprintf (buf->data, "QC%x", OR1KSIM_TID);
       buf->len = strlen (buf->data);
-      put_packet (buf);
+      put_packet (sim, buf);
     }
   else if (0 == strncmp ("qCRC", buf->data, strlen ("qCRC")))
     {
       /* Return CRC of memory area */
       fprintf (stderr, "Warning: RSP CRC query not supported\n");
-      put_str_packet ("E01");
+      put_str_packet (sim, "E01");
     }
   else if (0 == strcmp ("qfThreadInfo", buf->data))
     {
@@ -1770,40 +1758,40 @@ rsp_query (struct rsp_buf *buf)
 	 OR1KSIM_TID to represent our single thread of control. */
       sprintf (buf->data, "m%x", OR1KSIM_TID);
       buf->len = strlen (buf->data);
-      put_packet (buf);
+      put_packet (sim, buf);
     }
   else if (0 == strcmp ("qsThreadInfo", buf->data))
     {
       /* Return info about more active threads. We have no more, so return the
 	 end of list marker, 'l' */
-      put_str_packet ("l");
+      put_str_packet (sim, "l");
     }
   else if (0 == strncmp ("qGetTLSAddr:", buf->data, strlen ("qGetTLSAddr:")))
     {
       /* We don't support this feature */
-      put_str_packet ("");
+      put_str_packet (sim, "");
     }
   else if (0 == strncmp ("qL", buf->data, strlen ("qL")))
     {
       /* Deprecated and replaced by 'qfThreadInfo' */
       fprintf (stderr, "Warning: RSP qL deprecated: no info returned\n");
-      put_str_packet ("qM001");
+      put_str_packet (sim, "qM001");
     }
   else if (0 == strcmp ("qOffsets", buf->data))
     {
       /* Report any relocation */
-      put_str_packet ("Text=0;Data=0;Bss=0");
+      put_str_packet (sim, "Text=0;Data=0;Bss=0");
     }
   else if (0 == strncmp ("qP", buf->data, strlen ("qP")))
     {
       /* Deprecated and replaced by 'qThreadExtraInfo' */
       fprintf (stderr, "Warning: RSP qP deprecated: no info returned\n");
-      put_str_packet ("");
+      put_str_packet (sim, "");
     }
   else if (0 == strncmp ("qRcmd,", buf->data, strlen ("qRcmd,")))
     {
       /* This is used to interface to commands to do "stuff" */
-      rsp_command (buf);
+      rsp_command (sim, buf);
     }
   else if (0 == strncmp ("qSupported", buf->data, strlen ("qSupported")))
     {
@@ -1816,14 +1804,14 @@ rsp_query (struct rsp_buf *buf)
       char  reply[GDB_BUF_MAX];
 
       sprintf (reply, "PacketSize=%x", GDB_BUF_MAX);
-      put_str_packet (reply);
+      put_str_packet (sim, reply);
     }
   else if (0 == strncmp ("qSymbol:", buf->data, strlen ("qSymbol:")))
     {
       /* Offer to look up symbols. Nothing we want (for now). TODO. This just
 	 ignores any replies to symbols we looked up, but we didn't want to
 	 do that anyway! */
-      put_str_packet ("OK");
+      put_str_packet (sim, "OK");
     }
   else if (0 == strncmp ("qThreadExtraInfo,", buf->data,
 			 strlen ("qThreadExtraInfo,")))
@@ -1833,14 +1821,14 @@ rsp_query (struct rsp_buf *buf)
       sprintf (buf->data, "%02x%02x%02x%02x%02x%02x%02x%02x%02x",
 	       'R', 'u', 'n', 'n', 'a', 'b', 'l', 'e', 0);
       buf->len = strlen (buf->data);
-      put_packet (buf);
+      put_packet (sim, buf);
     }
   else if (0 == strncmp ("qXfer:", buf->data, strlen ("qXfer:")))
     {
       /* For now we support no 'qXfer' requests, but these should not be
 	 expected, since they were not reported by 'qSupported' */
       fprintf (stderr, "Warning: RSP 'qXfer' not supported: ignored\n");
-      put_str_packet ("");
+      put_str_packet (sim, "");
     }
   else
     {
@@ -1857,7 +1845,7 @@ rsp_query (struct rsp_buf *buf)
    @param[in] buf  The request in full                                       */
 /*---------------------------------------------------------------------------*/
 static void
-rsp_command (struct rsp_buf *buf)
+rsp_command (or1ksim *sim, struct rsp_buf *buf)
 {
   char  cmd[GDB_BUF_MAX];
 
@@ -1873,7 +1861,7 @@ rsp_command (struct rsp_buf *buf)
 	{
 	  fprintf (stderr, "Warning: qRcmd %s not recognized: ignored\n",
 		   cmd);
-	  put_str_packet ("E01");
+	  put_str_packet (sim, "E01");
 	  return;
 	}
 
@@ -1882,15 +1870,15 @@ rsp_command (struct rsp_buf *buf)
 	{
 	  fprintf (stderr, "Warning: qRcmd readspr %x too large: ignored\n",
 		   regno);
-	  put_str_packet ("E01");
+	  put_str_packet (sim, "E01");
 	  return;
 	}
 
       /* Construct the reply */
-      sprintf (cmd, "%8lx", (unsigned long int)mfspr (regno));
+      sprintf (cmd, "%8lx", (unsigned long int)mfspr (sim, regno));
       ascii2hex (buf->data, cmd);
       buf->len = strlen (buf->data);
-      put_packet (buf);
+      put_packet (sim, buf);
     }
   else if (0 == strncmp ("writespr ", cmd, strlen ("writespr")))
     {
@@ -1902,7 +1890,7 @@ rsp_command (struct rsp_buf *buf)
 	{
 	  fprintf (stderr, "Warning: qRcmd %s not recognized: ignored\n",
 		   cmd);
-	  put_str_packet ("E01");
+	  put_str_packet (sim, "E01");
 	  return;
 	}
 
@@ -1911,15 +1899,15 @@ rsp_command (struct rsp_buf *buf)
 	{
 	  fprintf (stderr, "Warning: qRcmd writespr %x too large: ignored\n",
 		   regno);
-	  put_str_packet ("E01");
+	  put_str_packet (sim, "E01");
 	  return;
 	}
 
       /* Update the SPR and reply "OK" */
-      mtspr (regno, val);
-      put_str_packet ("OK");
+      mtspr (sim, regno, val);
+      put_str_packet (sim, "OK");
     }
-      
+
 }	/* rsp_command () */
 
 
@@ -1929,12 +1917,12 @@ rsp_command (struct rsp_buf *buf)
    @param[in] buf  The request                                               */
 /*---------------------------------------------------------------------------*/
 static void
-rsp_set (struct rsp_buf *buf)
+rsp_set (or1ksim *sim, struct rsp_buf *buf)
 {
   if (0 == strncmp ("QPassSignals:", buf->data, strlen ("QPassSignals:")))
     {
       /* Passing signals not supported */
-      put_str_packet ("");
+      put_str_packet (sim, "");
     }
   else if ((0 == strncmp ("QTDP",    buf->data, strlen ("QTDP")))   ||
 	   (0 == strncmp ("QFrame",  buf->data, strlen ("QFrame"))) ||
@@ -1946,7 +1934,7 @@ rsp_set (struct rsp_buf *buf)
       /* All tracepoint features are not supported. This reply is really only
 	 needed to 'QTDP', since with that the others should not be
 	 generated. */
-      put_str_packet ("");
+      put_str_packet (sim, "");
     }
   else
     {
@@ -1963,9 +1951,9 @@ rsp_set (struct rsp_buf *buf)
    never get control back.                                                   */
 /*---------------------------------------------------------------------------*/
 static void
-rsp_restart ()
+rsp_restart (or1ksim *sim)
 {
-  set_npc (rsp.start_addr);
+  set_npc (sim, sim->rsp.start_addr);
 
 }	/* rsp_restart () */
 
@@ -1979,23 +1967,23 @@ rsp_restart ()
    @param[in] buf  The full step packet                          */
 /*---------------------------------------------------------------------------*/
 static void
-rsp_step (struct rsp_buf *buf)
+rsp_step (or1ksim *sim, struct rsp_buf *buf)
 {
   unsigned long int  addr;		/* The address to step from, if any */
 
   if (0 == strcmp ("s", buf->data))
     {
-      addr = cpu_state.pc;	/* Default uses current NPC */
+      addr = sim->cpu_state.pc;	/* Default uses current NPC */
     }
   else if (1 != sscanf (buf->data, "s%lx", &addr))
     {
       fprintf (stderr,
 	       "Warning: RSP step address %s not recognized: ignored\n",
 	       buf->data);
-      addr = cpu_state.pc;	/* Default uses current NPC */
+      addr = sim->cpu_state.pc;	/* Default uses current NPC */
     }
 
-  rsp_step_generic (addr, EXCEPT_NONE);
+  rsp_step_generic (sim, addr, EXCEPT_NONE);
 
 }	/* rsp_step () */
 
@@ -2008,7 +1996,7 @@ rsp_step (struct rsp_buf *buf)
    @param[in] buf  The full step with signal packet              */
 /*---------------------------------------------------------------------------*/
 static void
-rsp_step_with_signal (struct rsp_buf *buf)
+rsp_step_with_signal (or1ksim *sim, struct rsp_buf *buf)
 {
   printf ("RSP step with signal '%s' received\n", buf->data);
 
@@ -2028,30 +2016,30 @@ rsp_step_with_signal (struct rsp_buf *buf)
    @param[in] except  The exception to use (if any)                          */
 /*---------------------------------------------------------------------------*/
 static void
-rsp_step_generic (unsigned long int  addr,
+rsp_step_generic (or1ksim *sim, unsigned long int  addr,
 		  unsigned long int  except)
 {
   /* Set the address as the value of the next program counter */
-  set_npc (addr);
+  set_npc (sim, addr);
 
   /* Clear Debug Reason Register and watchpoint break generation in Debug Mode
      Register 2 */
-  cpu_state.sprs[SPR_DRR]   = 0;
-  cpu_state.sprs[SPR_DMR2] &= ~SPR_DMR2_WGB;
+  sim->cpu_state.sprs[SPR_DRR]   = 0;
+  sim->cpu_state.sprs[SPR_DMR2] &= ~SPR_DMR2_WGB;
 
   /* Set the single step trigger in Debug Mode Register 1 and set traps to be
      handled by the debug unit in the Debug Stop Register */
-  cpu_state.sprs[SPR_DMR1] |= SPR_DMR1_ST;
-  cpu_state.sprs[SPR_DSR]  |= SPR_DSR_TE;
+  sim->cpu_state.sprs[SPR_DMR1] |= SPR_DMR1_ST;
+  sim->cpu_state.sprs[SPR_DSR]  |= SPR_DSR_TE;
 
   /* Unstall the processor */
-  set_stall_state (0);
+  set_stall_state (sim, 0);
 
   /* Any signal is cleared. */
-  rsp.sigval = TARGET_SIGNAL_NONE;
+  sim->rsp.sigval = TARGET_SIGNAL_NONE;
 
   /* Note the GDB client is now waiting for a reply. */
-  rsp.client_waiting = 1;
+  sim->rsp.client_waiting = 1;
 
 }	/* rsp_step_generic () */
 
@@ -2064,19 +2052,19 @@ rsp_step_generic (unsigned long int  addr,
    @param[in] buf  The request                                               */
 /*---------------------------------------------------------------------------*/
 static void
-rsp_vpkt (struct rsp_buf *buf)
+rsp_vpkt (or1ksim *sim, struct rsp_buf *buf)
 {
   if (0 == strncmp ("vAttach;", buf->data, strlen ("vAttach;")))
     {
       /* Attaching is a null action, since we have no other process. We just
 	 return a stop packet (using TRAP) to indicate we are stopped. */
-      put_str_packet ("S05");
+      put_str_packet (sim, "S05");
       return;
     }
   else if (0 == strcmp ("vCont?", buf->data))
     {
       /* For now we don't support this. */
-      put_str_packet ("");
+      put_str_packet (sim, "");
       return;
     }
   else if (0 == strncmp ("vCont", buf->data, strlen ("vCont")))
@@ -2090,28 +2078,28 @@ rsp_vpkt (struct rsp_buf *buf)
     {
       /* For now we don't support this. */
       fprintf (stderr, "Warning: RSP vFile not supported: ignored\n" );
-      put_str_packet ("");
+      put_str_packet (sim, "");
       return;
     }
   else if (0 == strncmp ("vFlashErase:", buf->data, strlen ("vFlashErase:")))
     {
       /* For now we don't support this. */
       fprintf (stderr, "Warning: RSP vFlashErase not supported: ignored\n" );
-      put_str_packet ("E01");
+      put_str_packet (sim, "E01");
       return;
     }
   else if (0 == strncmp ("vFlashWrite:", buf->data, strlen ("vFlashWrite:")))
     {
       /* For now we don't support this. */
       fprintf (stderr, "Warning: RSP vFlashWrite not supported: ignored\n" );
-      put_str_packet ("E01");
+      put_str_packet (sim, "E01");
       return;
     }
   else if (0 == strcmp ("vFlashDone", buf->data))
     {
       /* For now we don't support this. */
       fprintf (stderr, "Warning: RSP vFlashDone not supported: ignored\n" );
-      put_str_packet ("E01");
+      put_str_packet (sim, "E01");
       return;
     }
   else if (0 == strncmp ("vRun;", buf->data, strlen ("vRun;")))
@@ -2126,14 +2114,14 @@ rsp_vpkt (struct rsp_buf *buf)
       /* Restart the current program. However unlike a "R" packet, "vRun"
 	 should behave as though it has just stopped. We use signal
 	 5 (TRAP). */
-      rsp_restart ();
-      put_str_packet ("S05");
+      rsp_restart (sim);
+      put_str_packet (sim, "S05");
     }
   else
     {
       fprintf (stderr, "Warning: Unknown RSP 'v' packet type %s: ignored\n",
 	       buf->data);
-      put_str_packet ("E01");
+      put_str_packet (sim, "E01");
       return;
     }
 }	/* rsp_vpkt () */
@@ -2156,7 +2144,7 @@ rsp_vpkt (struct rsp_buf *buf)
    @param[in] buf  The command received                                      */
 /*---------------------------------------------------------------------------*/
 static void
-rsp_write_mem_bin (struct rsp_buf *buf)
+rsp_write_mem_bin (or1ksim *sim, struct rsp_buf *buf)
 {
   unsigned int  addr;			/* Where to write the memory */
   int           len;			/* Number of bytes to write */
@@ -2168,7 +2156,7 @@ rsp_write_mem_bin (struct rsp_buf *buf)
     {
       fprintf (stderr, "Warning: Failed to recognize RSP write memory "
 	       "command: %s\n", buf->data);
-      put_str_packet ("E01");
+      put_str_packet (sim, "E01");
       return;
     }
 
@@ -2190,25 +2178,25 @@ rsp_write_mem_bin (struct rsp_buf *buf)
   /* Write the bytes to memory */
   for (off = 0; off < len; off++)
     {
-      if (NULL == verify_memoryarea (addr + off))
+      if (NULL == verify_memoryarea (sim, addr + off))
 	{
 	  /* The error number doesn't matter. The GDB client will substitute
 	     its own */
-	  put_str_packet ("E01");
+	  put_str_packet (sim, "E01");
 	  return;
 	}
       else
 	{
 	  // Circumvent the read-only check usually done for mem accesses
-	  set_program8 (addr + off, bindat[off]);
+	  set_program8 (sim, addr + off, bindat[off]);
 	}
     }
 
-  put_str_packet ("OK");
+  put_str_packet (sim, "OK");
 
 }	/* rsp_write_mem_bin () */
 
-      
+
 /*---------------------------------------------------------------------------*/
 /*!Handle a RSP remove breakpoint or matchpoint request
 
@@ -2221,7 +2209,7 @@ rsp_write_mem_bin (struct rsp_buf *buf)
    @param[in] buf  The command received                                      */
 /*---------------------------------------------------------------------------*/
 static void
-rsp_remove_matchpoint (struct rsp_buf *buf)
+rsp_remove_matchpoint (or1ksim *sim, struct rsp_buf *buf)
 {
   enum mp_type       type;		/* What sort of matchpoint */
   unsigned long int  addr;		/* Address specified */
@@ -2233,7 +2221,7 @@ rsp_remove_matchpoint (struct rsp_buf *buf)
     {
       fprintf (stderr, "Warning: RSP matchpoint deletion request not "
 	       "recognized: ignored\n");
-      put_str_packet ("E01");
+      put_str_packet (sim, "E01");
       return;
     }
 
@@ -2250,46 +2238,46 @@ rsp_remove_matchpoint (struct rsp_buf *buf)
     {
     case BP_MEMORY:
       /* Memory breakpoint - replace the original instruction. */
-      mpe = mp_hash_delete (type, addr);
+      mpe = mp_hash_delete (sim, type, addr);
 
       /* If the BP hasn't yet been deleted, put the original instruction
 	 back. Don't forget to free the hash table entry afterwards. */
       if (NULL != mpe)
 	{
-	  set_program32 (addr, mpe->instr);
+	  set_program32 (sim, addr, mpe->instr);
 	  free (mpe);
 	}
 
-      put_str_packet ("OK");
+      put_str_packet (sim, "OK");
 
       return;
-     
+
     case BP_HARDWARE:
-      put_str_packet ("");		/* Not supported */
+      put_str_packet (sim, "");		/* Not supported */
       return;
 
     case WP_WRITE:
-      put_str_packet ("");		/* Not supported */
+      put_str_packet (sim, "");		/* Not supported */
       return;
 
     case WP_READ:
-      put_str_packet ("");		/* Not supported */
+      put_str_packet (sim, "");		/* Not supported */
       return;
 
     case WP_ACCESS:
-      put_str_packet ("");		/* Not supported */
+      put_str_packet (sim, "");		/* Not supported */
       return;
 
     default:
       fprintf (stderr, "Warning: RSP matchpoint type %d not "
 	       "recognized: ignored\n", type);
-      put_str_packet ("E01");
+      put_str_packet (sim, "E01");
       return;
 
     }
 }	/* rsp_remove_matchpoint () */
 
-      
+
 /*---------------------------------------------------------------------------*/
 /*!Handle a RSP insert breakpoint or matchpoint request
 
@@ -2302,7 +2290,7 @@ rsp_remove_matchpoint (struct rsp_buf *buf)
    @param[in] buf  The command received                                      */
 /*---------------------------------------------------------------------------*/
 static void
-rsp_insert_matchpoint (struct rsp_buf *buf)
+rsp_insert_matchpoint (or1ksim *sim,struct rsp_buf *buf)
 {
   enum mp_type       type;		/* What sort of matchpoint */
   unsigned long int  addr;		/* Address specified */
@@ -2313,7 +2301,7 @@ rsp_insert_matchpoint (struct rsp_buf *buf)
     {
       fprintf (stderr, "Warning: RSP matchpoint insertion request not "
 	       "recognized: ignored\n");
-      put_str_packet ("E01");
+      put_str_packet (sim, "E01");
       return;
     }
 
@@ -2330,35 +2318,35 @@ rsp_insert_matchpoint (struct rsp_buf *buf)
     {
     case BP_MEMORY:
       /* Memory breakpoint - substitute a TRAP instruction */
-      mp_hash_add (type, addr, eval_direct32 (addr, 0, 0));
-      set_program32 (addr, OR1K_TRAP_INSTR);
-      put_str_packet ("OK");
+      mp_hash_add ( sim, type, addr, eval_direct32 (sim, addr, 0, 0));
+      set_program32 (sim, addr, OR1K_TRAP_INSTR);
+      put_str_packet (sim, "OK");
 
       return;
-     
+
     case BP_HARDWARE:
-      put_str_packet ("");		/* Not supported */
+      put_str_packet (sim, "");		/* Not supported */
       return;
 
     case WP_WRITE:
-      put_str_packet ("");		/* Not supported */
+      put_str_packet (sim, "");		/* Not supported */
       return;
 
     case WP_READ:
-      put_str_packet ("");		/* Not supported */
+      put_str_packet (sim, "");		/* Not supported */
       return;
 
     case WP_ACCESS:
-      put_str_packet ("");		/* Not supported */
+      put_str_packet (sim, "");		/* Not supported */
       return;
 
     default:
       fprintf (stderr, "Warning: RSP matchpoint type %d not "
 	       "recognized: ignored\n", type);
-      put_str_packet ("E01");
+      put_str_packet (sim, "E01");
       return;
 
     }
 
 }	/* rsp_insert_matchpoint () */
- 
+

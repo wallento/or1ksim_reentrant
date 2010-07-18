@@ -1,8 +1,9 @@
 /* execute.c -- OR1K architecture dependent simulation
 
    Copyright (C) 1999 Damjan Lampret, lampret@opencores.org
-   Copyright (C) 2005 György `nog' Jeney, nog@sdf.lonestar.org
+   Copyright (C) 2005 GyÃ¶rgy `nog' Jeney, nog@sdf.lonestar.org
    Copyright (C) 2008 Embecosm Limited
+   Copyright (C) 2009 Stefan Wallentowitz, stefan.wallentowitz@tum.de
   
    Contributor Jeremy Bennett <jeremy.bennett@embecosm.com>
   
@@ -70,47 +71,9 @@
 
 #endif	/* SIMPLE_EXECUTION */
 
-
-/*! Current cpu state. Globally available. */
-struct cpu_state  cpu_state;
-
-/*! Temporary program counter. Globally available */
-oraddr_t  pcnext;
-
-/*! Num cycles waiting for stores to complete. Globally available */
-int  sbuf_wait_cyc = 0;
-
-/*! Number of total store cycles. Globally available */
-int  sbuf_total_cyc = 0;
-
-/*! Whether we are doing statistical analysis. Globally available */
-int  do_stats = 0;
-
-/*! History of execution. Globally available */
-struct hist_exec *hist_exec_tail = NULL;
-
-/* Benchmark multi issue execution. This file only */
-static int  multissue[20];
-static int  issued_per_cycle = 4;
-
-/* Store buffer analysis - stores are accumulated and commited when IO is
-   idle. This file only */
-static int  sbuf_head              = 0;
-static int  sbuf_tail              = 0;
-static int  sbuf_count             = 0;
-#if !(DYNAMIC_EXECUTION)
-static int  sbuf_buf[MAX_SBUF_LEN] = { 0 };
-#endif
-
-static int sbuf_prev_cycles = 0;
-
-/* Variables used throughout this file to share information */
-static int  breakpoint;
-static int  next_delay_insn;
-
 /* Forward declaration of static functions */
 #if !(DYNAMIC_EXECUTION)
-static void decode_execute (struct iqueue_entry *current);
+static void decode_execute (or1ksim *sim,struct iqueue_entry *current);
 #endif
 
 /*---------------------------------------------------------------------------*/
@@ -124,12 +87,12 @@ static void decode_execute (struct iqueue_entry *current);
    @return  The value of the register                                        */
 /*---------------------------------------------------------------------------*/
 uorreg_t
-evalsim_reg (unsigned int  regno)
+evalsim_reg (or1ksim *sim, unsigned int  regno)
 {
   if (regno < MAX_GPRS)
     {
 #if RAW_RANGE_STATS
-      int delta = (runtime.sim.cycles - raw_stats.reg[regno]);
+      int delta = (sim->runtime.sim.cycles - raw_stats.reg[regno]);
 
       if ((unsigned long) delta < (unsigned long) RAW_RANGE)
 	{
@@ -137,12 +100,12 @@ evalsim_reg (unsigned int  regno)
 	}
 #endif /* RAW_RANGE */
 
-      return cpu_state.reg[regno];
+      return sim->cpu_state.reg[regno];
     }
   else
     {
       PRINTF ("\nABORT: read out of registers\n");
-      sim_done ();
+      sim_done ( sim );
       return 0;
     }
 }	/* evalsim_reg() */
@@ -157,7 +120,7 @@ evalsim_reg (unsigned int  regno)
    @param[in] value  The value to be set                                     */
 /*---------------------------------------------------------------------------*/
 void
-setsim_reg (unsigned int  regno,
+setsim_reg (or1ksim *sim, unsigned int  regno,
 	    uorreg_t      value)
 {
   if (regno == 0)		/* gpr0 is always zero */
@@ -167,16 +130,16 @@ setsim_reg (unsigned int  regno,
 
   if (regno < MAX_GPRS)
     {
-      cpu_state.reg[regno] = value;
+      sim->cpu_state.reg[regno] = value;
     }
   else
     {
       PRINTF ("\nABORT: write out of registers\n");
-      sim_done ();
+      sim_done ( sim );
     }
 
 #if RAW_RANGE_STATS
-  raw_stats.reg[regno] = runtime.sim.cycles;
+  raw_stats.reg[regno] = sim->runtime.sim.cycles;
 #endif /* RAW_RANGE */
 
 }	/* setsim_reg() */
@@ -249,7 +212,7 @@ eval_operand_val (uint32_t               insn,
   @return  Non-zero if yes.                                                  */
 /*---------------------------------------------------------------------------*/
 static int
-check_depend (struct iqueue_entry *prev,
+check_depend (or1ksim *sim, struct iqueue_entry *prev,
 	      struct iqueue_entry *next)
 {
   /* Find destination type. */
@@ -265,7 +228,7 @@ check_depend (struct iqueue_entry *prev,
       return  1;
     }
 
-  opd      = op_start[prev->insn_index];
+  opd      = sim->op_start[prev->insn_index];
   prev_dis = 0;
 
   while (1)
@@ -303,7 +266,7 @@ check_depend (struct iqueue_entry *prev,
     }
 
   /* We search all source operands - if we find confict => return 1 */
-  opd      = op_start[next->insn_index];
+  opd      = sim->op_start[next->insn_index];
   next_dis = 0;
 
   while (1)
@@ -317,7 +280,7 @@ check_depend (struct iqueue_entry *prev,
            l.lw r1, k(r1)
            l.sw k(r1), r4
          Here r1 is a destination in l.sw */
-   
+
       /* FIXME: This situation is not handeld here when r1 == r2:
            l.sw k(r1), r4
            l.lw r3, k(r2) */
@@ -353,17 +316,17 @@ check_depend (struct iqueue_entry *prev,
    @return  Nonzero if instruction should NOT be executed                    */
 /*---------------------------------------------------------------------------*/
 static int
-fetch ()
+fetch (or1ksim *sim)
 {
   static int break_just_hit = 0;
 
-  if (NULL != breakpoints)
+  if (NULL != sim->breakpoints)
     {
       /* MM: Check for breakpoint.  This has to be done in fetch cycle,
-         because of peripheria.  
+         because of peripheria.
          MM1709: if we cannot access the memory entry, we could not set the
          breakpoint earlier, so just check the breakpoint list.  */
-      if (has_breakpoint (peek_into_itlb (cpu_state.pc)) && !break_just_hit)
+      if (has_breakpoint (sim, peek_into_itlb (sim, sim->cpu_state.pc)) && !break_just_hit)
 	{
 	  break_just_hit = 1;
 	  return 1;		/* Breakpoint set. */
@@ -371,14 +334,14 @@ fetch ()
       break_just_hit = 0;
     }
 
-  breakpoint                 = 0;
-  cpu_state.iqueue.insn_addr = cpu_state.pc;
-  cpu_state.iqueue.insn      = eval_insn (cpu_state.pc, &breakpoint);
+  sim->breakpoint                 = 0;
+  sim->cpu_state.iqueue.insn_addr = sim->cpu_state.pc;
+  sim->cpu_state.iqueue.insn      = eval_insn (sim,sim->cpu_state.pc, &sim->breakpoint);
 
   /* Fetch instruction. */
-  if (!except_pending)
+  if (!sim->except_pending)
     {
-      runtime.cpu.instructions++;
+      sim->runtime.cpu.instructions++;
     }
 
   /* update_pc will be called after execution */
@@ -391,13 +354,13 @@ fetch ()
 /*!This code actually updates the PC value                                   */
 /*---------------------------------------------------------------------------*/
 static void
-update_pc ()
+update_pc (or1ksim *sim)
 {
-  cpu_state.delay_insn    = next_delay_insn;
-  cpu_state.sprs[SPR_PPC] = cpu_state.pc;	/* Store value for later */
-  cpu_state.pc            = pcnext;
-  pcnext                  = cpu_state.delay_insn ? cpu_state.pc_delay :
-                                                   pcnext + 4;
+  sim->cpu_state.delay_insn    = sim->next_delay_insn;
+  sim->cpu_state.sprs[SPR_PPC] = sim->cpu_state.pc;	/* Store value for later */
+  sim->cpu_state.pc            = sim->pcnext;
+  sim->pcnext                  = sim->cpu_state.delay_insn ? sim->cpu_state.pc_delay :
+                                                   sim->pcnext + 4;
 }	/* update_pc() */
 
 
@@ -409,77 +372,77 @@ update_pc ()
    @param[in] current  The instruction being executed                        */
 /*---------------------------------------------------------------------------*/
 void
-analysis (struct iqueue_entry *current)
+analysis (or1ksim *sim,struct iqueue_entry *current)
 {
-  if (config.cpu.dependstats)
+  if (sim->config.cpu.dependstats)
     {
       /* Dynamic, dependency stats. */
-      adddstats (cpu_state.icomplet.insn_index, current->insn_index, 1,
-		 check_depend (&cpu_state.icomplet, current));
+      adddstats (sim, sim->cpu_state.icomplet.insn_index, current->insn_index, 1,
+		 check_depend (sim, &sim->cpu_state.icomplet, current));
 
       /* Dynamic, functional units stats. */
-      addfstats (or32_opcodes[cpu_state.icomplet.insn_index].func_unit,
+      addfstats (sim, or32_opcodes[sim->cpu_state.icomplet.insn_index].func_unit,
 		 or32_opcodes[current->insn_index].func_unit, 1,
-		 check_depend (&cpu_state.icomplet, current));
+		 check_depend (sim, &sim->cpu_state.icomplet, current));
 
       /* Dynamic, single stats. */
-      addsstats (current->insn_index, 1);
+      addsstats (sim, current->insn_index, 1);
     }
 
-  if (config.cpu.superscalar)
+  if (sim->config.cpu.superscalar)
     {
       if ((or32_opcodes[current->insn_index].func_unit == it_branch) ||
 	  (or32_opcodes[current->insn_index].func_unit == it_jump))
-	runtime.sim.storecycles += 0;
+	sim->runtime.sim.storecycles += 0;
 
       if (or32_opcodes[current->insn_index].func_unit == it_store)
-	runtime.sim.storecycles += 1;
+	sim->runtime.sim.storecycles += 1;
 
       if (or32_opcodes[current->insn_index].func_unit == it_load)
-	runtime.sim.loadcycles += 1;
+	sim->runtime.sim.loadcycles += 1;
 
       /* Pseudo multiple issue benchmark */
-      if ((multissue[or32_opcodes[current->insn_index].func_unit] < 1) ||
-	  (check_depend (&cpu_state.icomplet, current))
-	  || (issued_per_cycle < 1))
+      if ((sim->multissue[or32_opcodes[current->insn_index].func_unit] < 1) ||
+	  (check_depend (sim, &sim->cpu_state.icomplet, current))
+	  || (sim->issued_per_cycle < 1))
 	{
 	  int i;
 	  for (i = 0; i < 20; i++)
-	    multissue[i] = 2;
-	  issued_per_cycle = 2;
-	  runtime.cpu.supercycles++;
-	  if (check_depend (&cpu_state.icomplet, current))
-	    runtime.cpu.hazardwait++;
-	  multissue[it_unknown] = 2;
-	  multissue[it_shift] = 2;
-	  multissue[it_compare] = 1;
-	  multissue[it_branch] = 1;
-	  multissue[it_jump] = 1;
-	  multissue[it_extend] = 2;
-	  multissue[it_nop] = 2;
-	  multissue[it_move] = 2;
-	  multissue[it_movimm] = 2;
-	  multissue[it_arith] = 2;
-	  multissue[it_store] = 2;
-	  multissue[it_load] = 2;
+	    sim->multissue[i] = 2;
+	  sim->issued_per_cycle = 2;
+	  sim->runtime.cpu.supercycles++;
+	  if (check_depend (sim, &sim->cpu_state.icomplet, current))
+	    sim->runtime.cpu.hazardwait++;
+	  sim->multissue[it_unknown] = 2;
+	  sim->multissue[it_shift] = 2;
+	  sim->multissue[it_compare] = 1;
+	  sim->multissue[it_branch] = 1;
+	  sim->multissue[it_jump] = 1;
+	  sim->multissue[it_extend] = 2;
+	  sim->multissue[it_nop] = 2;
+	  sim->multissue[it_move] = 2;
+	  sim->multissue[it_movimm] = 2;
+	  sim->multissue[it_arith] = 2;
+	  sim->multissue[it_store] = 2;
+	  sim->multissue[it_load] = 2;
 	}
-      multissue[or32_opcodes[current->insn_index].func_unit]--;
-      issued_per_cycle--;
+      sim->multissue[or32_opcodes[current->insn_index].func_unit]--;
+      sim->issued_per_cycle--;
     }
 
-  if (config.cpu.dependstats)
+  if (sim->config.cpu.dependstats)
     /* Instruction waits in completition buffer until retired. */
-    memcpy (&cpu_state.icomplet, current, sizeof (struct iqueue_entry));
+    memcpy (&sim->cpu_state.icomplet, current, sizeof (struct iqueue_entry));
 
-  if (config.sim.history)
+  if (sim->config.sim.history)
     {
       /* History of execution */
-      hist_exec_tail = hist_exec_tail->next;
-      hist_exec_tail->addr = cpu_state.icomplet.insn_addr;
+      sim->hist_exec_tail = sim->hist_exec_tail->next;
+      sim->hist_exec_tail->addr = sim->cpu_state.icomplet.insn_addr;
     }
 
-  if (config.sim.exe_log)
-    dump_exe_log ();
+  if (sim->config.sim.exe_log)
+    dump_exe_log (sim);
 
 }	/* analysis() */
 
@@ -494,40 +457,40 @@ analysis (struct iqueue_entry *current)
    @param[in] cyc  Number of cycles being analysed                           */
 /*---------------------------------------------------------------------------*/
 static void
-sbuf_store (int cyc)
+sbuf_store (or1ksim *sim,int cyc)
 {
-  int delta = runtime.sim.cycles - sbuf_prev_cycles;
+  int delta = sim->runtime.sim.cycles - sim->sbuf_prev_cycles;
 
-  sbuf_total_cyc   += cyc;
-  sbuf_prev_cycles  = runtime.sim.cycles;
+  sim->sbuf_total_cyc   += cyc;
+  sim->sbuf_prev_cycles  = sim->runtime.sim.cycles;
 
   /* Take stores from buffer, that occured meanwhile */
-  while (sbuf_count && delta >= sbuf_buf[sbuf_tail])
+  while (sim->sbuf_count && delta >= sim->sbuf_buf[sim->sbuf_tail])
     {
-      delta     -= sbuf_buf[sbuf_tail];
-      sbuf_tail  = (sbuf_tail + 1) % MAX_SBUF_LEN;
-      sbuf_count--;
+      delta     -= sim->sbuf_buf[sim->sbuf_tail];
+      sim->sbuf_tail  = (sim->sbuf_tail + 1) % MAX_SBUF_LEN;
+      sim->sbuf_count--;
     }
 
-  if (sbuf_count)
+  if (sim->sbuf_count)
     {
-      sbuf_buf[sbuf_tail] -= delta;
+      sim->sbuf_buf[sim->sbuf_tail] -= delta;
     }
 
   /* Store buffer is full, take one out */
-  if (sbuf_count >= config.cpu.sbuf_len)
+  if (sim->sbuf_count >= sim->config.cpu.sbuf_len)
     {
-      sbuf_wait_cyc          += sbuf_buf[sbuf_tail];
-      runtime.sim.mem_cycles += sbuf_buf[sbuf_tail];
-      sbuf_prev_cycles       += sbuf_buf[sbuf_tail];
-      sbuf_tail               = (sbuf_tail + 1) % MAX_SBUF_LEN;
-      sbuf_count--;
+      sim->sbuf_wait_cyc          += sim->sbuf_buf[sim->sbuf_tail];
+      sim->runtime.sim.mem_cycles += sim->sbuf_buf[sim->sbuf_tail];
+      sim->sbuf_prev_cycles       += sim->sbuf_buf[sim->sbuf_tail];
+      sim->sbuf_tail               = (sim->sbuf_tail + 1) % MAX_SBUF_LEN;
+      sim->sbuf_count--;
     }
 
   /* Put newest store in the buffer */
-  sbuf_buf[sbuf_head] = cyc;
-  sbuf_head           = (sbuf_head + 1) % MAX_SBUF_LEN;
-  sbuf_count++;
+  sim->sbuf_buf[sim->sbuf_head] = cyc;
+  sim->sbuf_head           = (sim->sbuf_head + 1) % MAX_SBUF_LEN;
+  sim->sbuf_count++;
 
 }	/* sbuf_store() */
 
@@ -538,32 +501,32 @@ sbuf_store (int cyc)
    Previous stores should commit, before any load                            */
 /*---------------------------------------------------------------------------*/
 static void
-sbuf_load ()
+sbuf_load (or1ksim *sim)
 {
-  int delta = runtime.sim.cycles - sbuf_prev_cycles;
-  sbuf_prev_cycles = runtime.sim.cycles;
+  int delta = sim->runtime.sim.cycles - sim->sbuf_prev_cycles;
+  sim->sbuf_prev_cycles = sim->runtime.sim.cycles;
 
   /* Take stores from buffer, that occured meanwhile */
-  while (sbuf_count && delta >= sbuf_buf[sbuf_tail])
+  while (sim->sbuf_count && delta >= sim->sbuf_buf[sim->sbuf_tail])
     {
-      delta     -= sbuf_buf[sbuf_tail];
-      sbuf_tail  = (sbuf_tail + 1) % MAX_SBUF_LEN;
-      sbuf_count--;
+      delta     -= sim->sbuf_buf[sim->sbuf_tail];
+      sim->sbuf_tail  = (sim->sbuf_tail + 1) % MAX_SBUF_LEN;
+      sim->sbuf_count--;
     }
 
-  if (sbuf_count)
+  if (sim->sbuf_count)
     {
-      sbuf_buf[sbuf_tail] -= delta;
+      sim->sbuf_buf[sim->sbuf_tail] -= delta;
     }
 
   /* Wait for all stores to complete */
-  while (sbuf_count > 0)
+  while (sim->sbuf_count > 0)
     {
-      sbuf_wait_cyc          += sbuf_buf[sbuf_tail];
-      runtime.sim.mem_cycles += sbuf_buf[sbuf_tail];
-      sbuf_prev_cycles       += sbuf_buf[sbuf_tail];
-      sbuf_tail               = (sbuf_tail + 1) % MAX_SBUF_LEN;
-      sbuf_count--;
+      sim->sbuf_wait_cyc          += sim->sbuf_buf[sim->sbuf_tail];
+      sim->runtime.sim.mem_cycles += sim->sbuf_buf[sim->sbuf_tail];
+      sim->sbuf_prev_cycles       += sim->sbuf_buf[sim->sbuf_tail];
+      sim->sbuf_tail               = (sim->sbuf_tail + 1) % MAX_SBUF_LEN;
+      sim->sbuf_count--;
     }
 }	/* sbuf_load() */
 
@@ -574,9 +537,9 @@ sbuf_load ()
 /*!Outputs dissasembled instruction                                          */
 /*---------------------------------------------------------------------------*/
 void
-dump_exe_log ()
+dump_exe_log (or1ksim *sim)
 {
-  oraddr_t      insn_addr = cpu_state.iqueue.insn_addr;
+  oraddr_t      insn_addr = sim->cpu_state.iqueue.insn_addr;
   unsigned int  i;
   unsigned int  j;
   uorreg_t      operand;
@@ -586,97 +549,97 @@ dump_exe_log ()
       return;
     }
 
-  if ((config.sim.exe_log_start <= runtime.cpu.instructions) &&
-      ((config.sim.exe_log_end <= 0) ||
-       (runtime.cpu.instructions <= config.sim.exe_log_end)))
+  if ((sim->config.sim.exe_log_start <= sim->runtime.cpu.instructions) &&
+      ((sim->config.sim.exe_log_end <= 0) ||
+       (sim->runtime.cpu.instructions <= sim->config.sim.exe_log_end)))
     {
       struct label_entry *entry;
 
-      if (config.sim.exe_log_marker &&
-	  !(runtime.cpu.instructions % config.sim.exe_log_marker))
+      if (sim->config.sim.exe_log_marker &&
+	  !(sim->runtime.cpu.instructions % sim->config.sim.exe_log_marker))
 	{
-	  fprintf (runtime.sim.fexe_log,
+	  fprintf (sim->runtime.sim.fexe_log,
 		   "--------------------- %8lli instruction "
 		   "---------------------\n",
-		   runtime.cpu.instructions);
+		   sim->runtime.cpu.instructions);
 	}
 
-      switch (config.sim.exe_log_type)
+      switch (sim->config.sim.exe_log_type)
 	{
 	case EXE_LOG_HARDWARE:
-	  fprintf (runtime.sim.fexe_log,
+	  fprintf (sim->runtime.sim.fexe_log,
 		   "\nEXECUTED(%11llu): %" PRIxADDR ":  ",
-		   runtime.cpu.instructions, insn_addr);
-	  fprintf (runtime.sim.fexe_log, "%.2x%.2x",
-		   eval_direct8 (insn_addr, 0, 0),
-		   eval_direct8 (insn_addr + 1, 0, 0));
-	  fprintf (runtime.sim.fexe_log, "%.2x%.2x",
-		   eval_direct8 (insn_addr + 2, 0, 0),
-		   eval_direct8 (insn_addr + 3, 0, 0));
+		   sim->runtime.cpu.instructions, insn_addr);
+	  fprintf (sim->runtime.sim.fexe_log, "%.2x%.2x",
+		   eval_direct8 (sim,insn_addr, 0, 0),
+		   eval_direct8 (sim,insn_addr + 1, 0, 0));
+	  fprintf (sim->runtime.sim.fexe_log, "%.2x%.2x",
+		   eval_direct8 (sim,insn_addr + 2, 0, 0),
+		   eval_direct8 (sim,insn_addr + 3, 0, 0));
 
 	  for (i = 0; i < MAX_GPRS; i++)
 	    {
 	      if (i % 4 == 0)
 		{
-		  fprintf (runtime.sim.fexe_log, "\n");
+		  fprintf (sim->runtime.sim.fexe_log, "\n");
 		}
 
-	      fprintf (runtime.sim.fexe_log, "GPR%2u: %" PRIxREG "  ", i,
-		       cpu_state.reg[i]);
+	      fprintf (sim->runtime.sim.fexe_log, "GPR%2u: %" PRIxREG "  ", i,
+		       sim->cpu_state.reg[i]);
 	    }
 
-	  fprintf (runtime.sim.fexe_log, "\n");
-	  fprintf (runtime.sim.fexe_log, "SR   : %.8" PRIx32 "  ",
-		   cpu_state.sprs[SPR_SR]);
-	  fprintf (runtime.sim.fexe_log, "EPCR0: %" PRIxADDR "  ",
-		   cpu_state.sprs[SPR_EPCR_BASE]);
-	  fprintf (runtime.sim.fexe_log, "EEAR0: %" PRIxADDR "  ",
-		   cpu_state.sprs[SPR_EEAR_BASE]);
-	  fprintf (runtime.sim.fexe_log, "ESR0 : %.8" PRIx32 "\n",
-		   cpu_state.sprs[SPR_ESR_BASE]);
+	  fprintf (sim->runtime.sim.fexe_log, "\n");
+	  fprintf (sim->runtime.sim.fexe_log, "SR   : %.8" PRIx32 "  ",
+		   sim->cpu_state.sprs[SPR_SR]);
+	  fprintf (sim->runtime.sim.fexe_log, "EPCR0: %" PRIxADDR "  ",
+		   sim->cpu_state.sprs[SPR_EPCR_BASE]);
+	  fprintf (sim->runtime.sim.fexe_log, "EEAR0: %" PRIxADDR "  ",
+		   sim->cpu_state.sprs[SPR_EEAR_BASE]);
+	  fprintf (sim->runtime.sim.fexe_log, "ESR0 : %.8" PRIx32 "\n",
+		   sim->cpu_state.sprs[SPR_ESR_BASE]);
 	  break;
 
 	case EXE_LOG_SIMPLE:
 	case EXE_LOG_SOFTWARE:
-	  disassemble_index (cpu_state.iqueue.insn,
-			     cpu_state.iqueue.insn_index);
+	  disassemble_index (sim, sim->cpu_state.iqueue.insn,
+			     sim->cpu_state.iqueue.insn_index);
 
-	  entry = get_label (insn_addr);
+	  entry = get_label (sim, insn_addr);
 	  if (entry)
 	    {
-	      fprintf (runtime.sim.fexe_log, "%s:\n", entry->name);
+	      fprintf (sim->runtime.sim.fexe_log, "%s:\n", entry->name);
 	    }
-	  
-	  if (config.sim.exe_log_type == EXE_LOG_SOFTWARE)
+
+	  if (sim->config.sim.exe_log_type == EXE_LOG_SOFTWARE)
 	    {
 	      struct insn_op_struct *opd =
-		op_start[cpu_state.iqueue.insn_index];
+		sim->op_start[sim->cpu_state.iqueue.insn_index];
 
 	      j = 0;
 	      while (1)
 		{
-		  operand = eval_operand_val (cpu_state.iqueue.insn, opd);
+		  operand = eval_operand_val (sim->cpu_state.iqueue.insn, opd);
 		  while (!(opd->type & OPTYPE_OP))
 		    {
 		      opd++;
 		    }
 		  if (opd->type & OPTYPE_DIS)
 		    {
-		      fprintf (runtime.sim.fexe_log,
+		      fprintf (sim->runtime.sim.fexe_log,
 			       "EA =%" PRIxADDR " PA =%" PRIxADDR " ",
-			       cpu_state.insn_ea,
-			       peek_into_dtlb (cpu_state.insn_ea, 0, 0));
+			       sim->cpu_state.insn_ea,
+			       peek_into_dtlb (sim, sim->cpu_state.insn_ea, 0, 0));
 		      opd++;	/* Skip of register operand */
 		      j++;
 		    }
 		  else if ((opd->type & OPTYPE_REG) && operand)
 		    {
-		      fprintf (runtime.sim.fexe_log, "r%-2i=%" PRIxREG " ",
-			       (int) operand, evalsim_reg (operand));
+		      fprintf (sim->runtime.sim.fexe_log, "r%-2i=%" PRIxREG " ",
+			       (int) operand, evalsim_reg (sim, operand));
 		    }
 		  else
 		    {
-		      fprintf (runtime.sim.fexe_log, "             ");
+		      fprintf (sim->runtime.sim.fexe_log, "             ");
 		    }
 		  j++;
 		  if (opd->type & OPTYPE_LAST)
@@ -685,20 +648,20 @@ dump_exe_log ()
 		    }
 		  opd++;
 		}
-	      if (or32_opcodes[cpu_state.iqueue.insn_index].flags & OR32_R_FLAG)
+	      if (or32_opcodes[sim->cpu_state.iqueue.insn_index].flags & OR32_R_FLAG)
 		{
-		  fprintf (runtime.sim.fexe_log, "SR =%" PRIxREG " ",
-			   cpu_state.sprs[SPR_SR]);
+		  fprintf (sim->runtime.sim.fexe_log, "SR =%" PRIxREG " ",
+			   sim->cpu_state.sprs[SPR_SR]);
 		  j++;
 		}
 	      while (j < 3)
 		{
-		  fprintf (runtime.sim.fexe_log, "             ");
+		  fprintf (sim->runtime.sim.fexe_log, "             ");
 		  j++;
 		}
 	    }
-	  fprintf (runtime.sim.fexe_log, "%" PRIxADDR " ", insn_addr);
-	  fprintf (runtime.sim.fexe_log, "%s\n", disassembled);
+	  fprintf (sim->runtime.sim.fexe_log, "%" PRIxADDR " ", insn_addr);
+	  fprintf (sim->runtime.sim.fexe_log, "%s\n", sim->disassembled);
 	}
     }
 }	/* dump_exe_log() */
@@ -710,14 +673,14 @@ dump_exe_log ()
    Supports the CLI 'r' and 't' commands                                     */
 /*---------------------------------------------------------------------------*/
 void
-dumpreg ()
+dumpreg (or1ksim *sim)
 {
   int       i;
   oraddr_t  physical_pc;
 
-  if ((physical_pc = peek_into_itlb (cpu_state.iqueue.insn_addr)))
+  if ((physical_pc = peek_into_itlb (sim, sim->cpu_state.iqueue.insn_addr)))
     {
-      disassemble_memory (physical_pc, physical_pc + 4, 0);
+      disassemble_memory (sim,physical_pc, physical_pc + 4, 0);
     }
   else
     {
@@ -725,32 +688,32 @@ dumpreg ()
       PRINTF ("no translation for currently executed instruction\n");
     }
 
-  // generate_time_pretty (temp, runtime.sim.cycles * config.sim.clkcycle_ps);
-  PRINTF (" (executed) [cycle %lld, #%lld]\n", runtime.sim.cycles,
-	  runtime.cpu.instructions);
-  if (config.cpu.superscalar)
+  // generate_time_pretty (temp, sim->runtime.sim.cycles * config.sim.clkcycle_ps);
+  PRINTF (" (executed) [cycle %lld, #%lld]\n", sim->runtime.sim.cycles,
+	  sim->runtime.cpu.instructions);
+  if (sim->config.cpu.superscalar)
     {
-      PRINTF ("Superscalar CYCLES: %u", runtime.cpu.supercycles);
+      PRINTF ("Superscalar CYCLES: %u", sim->runtime.cpu.supercycles);
     }
-  if (config.cpu.hazards)
+  if (sim->config.cpu.hazards)
     {
-      PRINTF ("  HAZARDWAIT: %u\n", runtime.cpu.hazardwait);
+      PRINTF ("  HAZARDWAIT: %u\n", sim->runtime.cpu.hazardwait);
     }
-  else if (config.cpu.superscalar)
+  else if (sim->config.cpu.superscalar)
     {
       PRINTF ("\n");
     }
 
-  if ((physical_pc = peek_into_itlb (cpu_state.pc)))
+  if ((physical_pc = peek_into_itlb (sim, sim->cpu_state.pc)))
     {
-      disassemble_memory (physical_pc, physical_pc + 4, 0);
+      disassemble_memory (sim,physical_pc, physical_pc + 4, 0);
     }
   else
     {
-      PRINTF ("%" PRIxADDR ": : xxxxxxxx  ITLB miss follows", cpu_state.pc);
+      PRINTF ("%" PRIxADDR ": : xxxxxxxx  ITLB miss follows", sim->cpu_state.pc);
     }
 
-  PRINTF (" (next insn) %s", (cpu_state.delay_insn ? "(delay insn)" : ""));
+  PRINTF (" (next insn) %s", (sim->cpu_state.delay_insn ? "(delay insn)" : ""));
 
   for (i = 0; i < MAX_GPRS; i++)
     {
@@ -759,10 +722,10 @@ dumpreg ()
 	  PRINTF ("\n");
 	}
 
-      PRINTF ("GPR%.2u: %" PRIxREG "  ", i, evalsim_reg (i));
+      PRINTF ("GPR%.2u: %" PRIxREG "  ", i, evalsim_reg (sim, i));
     }
 
-  PRINTF ("flag: %u\n", cpu_state.sprs[SPR_SR] & SPR_SR_F ? 1 : 0);
+  PRINTF ("flag: %u\n", sim->cpu_state.sprs[SPR_SR] & SPR_SR_F ? 1 : 0);
 
 }	/* dumpreg() */
 
@@ -775,9 +738,9 @@ dumpreg ()
    @param[in] current  Instruction being executed                            */
 /*---------------------------------------------------------------------------*/
 static void
-decode_execute_wrapper (struct iqueue_entry *current)
+decode_execute_wrapper (or1ksim *sim,struct iqueue_entry *current)
 {
-  breakpoint = 0;
+  sim->breakpoint = 0;
 
 #ifndef HAVE_EXECUTION
 #error HAVE_EXECUTION has to be defined in order to execute programs.
@@ -785,21 +748,21 @@ decode_execute_wrapper (struct iqueue_entry *current)
 
   /* FIXME: Most of this file is not needed with DYNAMIC_EXECUTION */
 #if !(DYNAMIC_EXECUTION)
-  decode_execute (current);
+  decode_execute (sim,current);
 #endif
 
 #if SET_OV_FLAG
   /* Check for range exception */
-  if ((cpu_state.sprs[SPR_SR] & SPR_SR_OVE) &&
-      (cpu_state.sprs[SPR_SR] & SPR_SR_OV))
+  if ((sim->cpu_state.sprs[SPR_SR] & SPR_SR_OVE) &&
+      (sim->cpu_state.sprs[SPR_SR] & SPR_SR_OV))
     {
-      except_handle (EXCEPT_RANGE, cpu_state.sprs[SPR_EEAR_BASE]);
+      except_handle (EXCEPT_RANGE, sim->cpu_state.sprs[SPR_EEAR_BASE]);
     }
 #endif
 
-  if (breakpoint)
+  if (sim->breakpoint)
     {
-      except_handle (EXCEPT_TRAP, cpu_state.sprs[SPR_EEAR_BASE]);
+      except_handle (sim,EXCEPT_TRAP, sim->cpu_state.sprs[SPR_EEAR_BASE]);
     }
 }	/* decode_execute_wrapper() */
 
@@ -807,31 +770,31 @@ decode_execute_wrapper (struct iqueue_entry *current)
 /*!Reset the CPU                                                             */
 /*---------------------------------------------------------------------------*/
 void
-cpu_reset ()
+cpu_reset ( or1ksim *sim )
 {
   int               i;
   struct hist_exec *hist_exec_head = NULL;
   struct hist_exec *hist_exec_new;
 
-  runtime.sim.cycles       = 0;
-  runtime.sim.loadcycles   = 0;
-  runtime.sim.storecycles  = 0;
-  runtime.cpu.instructions = 0;
-  runtime.cpu.supercycles  = 0;
-  runtime.cpu.hazardwait   = 0;
+  sim->runtime.sim.cycles       = 0;
+  sim->runtime.sim.loadcycles   = 0;
+  sim->runtime.sim.storecycles  = 0;
+  sim->runtime.cpu.instructions = 0;
+  sim->runtime.cpu.supercycles  = 0;
+  sim->runtime.cpu.hazardwait   = 0;
 
   for (i = 0; i < MAX_GPRS; i++)
     {
-      setsim_reg (i, 0);
+      setsim_reg (sim, i, 0);
     }
 
-  memset (&cpu_state.iqueue,   0, sizeof (cpu_state.iqueue));
-  memset (&cpu_state.icomplet, 0, sizeof (cpu_state.icomplet));
+  memset (&sim->cpu_state.iqueue,   0, sizeof (sim->cpu_state.iqueue));
+  memset (&sim->cpu_state.icomplet, 0, sizeof (sim->cpu_state.icomplet));
 
-  sbuf_head        = 0;
-  sbuf_tail        = 0;
-  sbuf_count       = 0;
-  sbuf_prev_cycles = 0;
+  sim->sbuf_head        = 0;
+  sim->sbuf_tail        = 0;
+  sim->sbuf_count       = 0;
+  sim->sbuf_prev_cycles = 0;
 
   /* Initialise execution history circular buffer */
   for (i = 0; i < HISTEXEC_LEN; i++)
@@ -850,40 +813,40 @@ cpu_reset ()
 	}
       else
 	{
-	  hist_exec_tail->next = hist_exec_new;
+	  sim->hist_exec_tail->next = hist_exec_new;
 	}
 
-      hist_exec_new->prev = hist_exec_tail;
-      hist_exec_tail = hist_exec_new;
+      hist_exec_new->prev = sim->hist_exec_tail;
+      sim->hist_exec_tail = hist_exec_new;
     }
 
   /* Make hist_exec_tail->next point to hist_exec_head */
-  hist_exec_tail->next = hist_exec_head;
-  hist_exec_head->prev = hist_exec_tail;
+  sim->hist_exec_tail->next = hist_exec_head;
+  hist_exec_head->prev = sim->hist_exec_tail;
 
   /* MM1409: All progs should start at reset vector entry! This sorted out by
-     setting the cpu_state.pc field below. Not clear this is very good code! */
+     setting the sim->cpu_state.pc field below. Not clear this is very good code! */
 
   /* Patches suggested by Shinji Wakatsuki, so that the vector address takes
      notice of the Exception Prefix High bit of the Supervision register */
-  pcnext = (cpu_state.sprs[SPR_SR] & SPR_SR_EPH ? 0xf0000000 : 0x00000000);
+  sim->pcnext = (sim->cpu_state.sprs[SPR_SR] & SPR_SR_EPH ? 0xf0000000 : 0x00000000);
 
-  if (config.sim.verbose)
+  if (sim->config.sim.verbose)
     {
-      PRINTF ("Starting at 0x%" PRIxADDR "\n", pcnext);
+      PRINTF ("Starting at 0x%" PRIxADDR "\n", sim->pcnext);
     }
 
-  cpu_state.pc  = pcnext;
-  pcnext       += 4;
+  sim->cpu_state.pc  = sim->pcnext;
+  sim->pcnext       += 4;
 
   /* MM1409: All programs should set their stack pointer!  */
 #if !(DYNAMIC_EXECUTION)
-  except_handle (EXCEPT_RESET, 0);
-  update_pc ();
+  except_handle (sim,EXCEPT_RESET, 0);
+  update_pc (sim);
 #endif
 
-  except_pending = 0;
-  cpu_state.pc   = cpu_state.sprs[SPR_SR] & SPR_SR_EPH ?
+  sim->except_pending = 0;
+  sim->cpu_state.pc   = sim->cpu_state.sprs[SPR_SR] & SPR_SR_EPH ?
     0xf0000000 + EXCEPT_RESET : EXCEPT_RESET;
 
 }	/* cpu_reset() */
@@ -891,38 +854,38 @@ cpu_reset ()
 
 /*---------------------------------------------------------------------------*/
 /*!Simulates one CPU clock cycle
- 
+
   @return  non-zero if a breakpoint is hit, zero otherwise.                  */
 /*---------------------------------------------------------------------------*/
 int
-cpu_clock ()
+cpu_clock ( or1ksim *sim )
 {
-  except_pending  = 0;
-  next_delay_insn = 0;
+  sim->except_pending  = 0;
+  sim->next_delay_insn = 0;
 
-  if (fetch ())
+  if (fetch ( sim ))
     {
       PRINTF ("Breakpoint hit.\n");
       return  1;
     }
 
-  if (except_pending)
+  if (sim->except_pending)
     {
-      update_pc ();
-      except_pending = 0;
+      update_pc (sim);
+      sim->except_pending = 0;
       return  0;
     }
 
-  if (breakpoint)
+  if (sim->breakpoint)
     {
-      except_handle (EXCEPT_TRAP, cpu_state.sprs[SPR_EEAR_BASE]);
-      update_pc ();
-      except_pending = 0;
+      except_handle (sim,EXCEPT_TRAP, sim->cpu_state.sprs[SPR_EEAR_BASE]);
+      update_pc (sim);
+      sim->except_pending = 0;
       return  0;
     }
 
-  decode_execute_wrapper (&cpu_state.iqueue);
-  update_pc ();
+  decode_execute_wrapper (sim,&sim->cpu_state.iqueue);
+  update_pc (sim);
   return  0;
 
 }	/* cpu_clock() */
@@ -933,14 +896,14 @@ cpu_clock ()
 /*---------------------------------------------------------------------------*/
 #if SIMPLE_EXECUTION
 void
-l_invalid (struct iqueue_entry *current)
+l_invalid (or1ksim *sim,struct iqueue_entry *current)
 {
 #else
 void
-l_invalid ()
+l_invalid (or1ksim *sim)
 {
 #endif
-  except_handle (EXCEPT_ILLEGAL, cpu_state.iqueue.insn_addr);
+  except_handle (sim,EXCEPT_ILLEGAL, sim->cpu_state.iqueue.insn_addr);
 
 }	/* l_invalid() */
 
@@ -949,25 +912,25 @@ l_invalid ()
 /*!The main execution loop                                                   */
 /*---------------------------------------------------------------------------*/
 void
-exec_main ()
+exec_main ( or1ksim *sim )
 {
   long long time_start;
 
   while (1)
     {
-      time_start = runtime.sim.cycles;
-      if (config.debug.enabled)
+      time_start = sim->runtime.sim.cycles;
+      if (sim->config.debug.enabled)
 	{
-	  while (runtime.cpu.stalled)
+	  while (sim->runtime.cpu.stalled)
 	    {
-	      if (config.debug.rsp_enabled)
+	      if (sim->config.debug.rsp_enabled)
 		{
 		  handle_rsp ();
 		}
-	      else if (config.debug.gdb_enabled)
+	      else if (sim->config.debug.gdb_enabled)
 		{
-		  block_jtag ();
-		  handle_server_socket (FALSE);
+		  block_jtag (sim);
+		  handle_server_socket (sim, FALSE);
 		}
 	      else
 		{
@@ -975,59 +938,59 @@ exec_main ()
 			   "enabled: Invoking CLI and terminating.\n");
 		  /* Dump the user into interactive mode.  From there he or
 		     she can decide what to do. */
-		  handle_sim_command ();
-		  sim_done ();
+		  handle_sim_command ( sim );
+		  sim_done (sim);
 		}
-	      if (runtime.sim.iprompt)
-		handle_sim_command ();
+	      if (sim->runtime.sim.iprompt)
+		handle_sim_command ( sim );
 	    }
 	}
 
       /* Each cycle has counter of mem_cycles; this value is joined with cycles
          at the end of the cycle; no sim originated memory accesses should be
          performed inbetween. */
-      runtime.sim.mem_cycles = 0;
+      sim->runtime.sim.mem_cycles = 0;
 
-      if (!config.pm.enabled ||
-	  !(config.pm.enabled &
-	    (cpu_state.sprs[SPR_PMR] & (SPR_PMR_DME | SPR_PMR_SME))))
+      if (!sim->config.pm.enabled ||
+	  !(sim->config.pm.enabled &
+	    (sim->cpu_state.sprs[SPR_PMR] & (SPR_PMR_DME | SPR_PMR_SME))))
 	{
-	  if (cpu_clock ())
+	  if (cpu_clock (sim))
 	    {
 	      /* A breakpoint has been hit, drop to interactive mode */
-	      handle_sim_command ();
+	      handle_sim_command ( sim );
 	    }
 	}
 
-      if (config.vapi.enabled && runtime.vapi.enabled)
+      if (sim->config.vapi.enabled && sim->runtime.vapi.enabled)
 	{
 	  vapi_check ();
 	}
 
-      if (config.debug.gdb_enabled)
+      if (sim->config.debug.gdb_enabled)
 	{
-	  handle_server_socket (FALSE);	/* block & check_stdin = false */
+	  handle_server_socket (sim, FALSE);	/* block & check_stdin = false */
 	}
 
-      if (config.debug.enabled)
+      if (sim->config.debug.enabled)
 	{
-	  if (cpu_state.sprs[SPR_DMR1] & SPR_DMR1_ST)
+	  if (sim->cpu_state.sprs[SPR_DMR1] & SPR_DMR1_ST)
 	    {
-	      set_stall_state (1);
+	      set_stall_state (sim, 1);
 
-	      if (config.debug.rsp_enabled)
+	      if (sim->config.debug.rsp_enabled)
 		{
 		  rsp_exception (EXCEPT_TRAP);
 		}
 	    }
 	}
 
-      runtime.sim.cycles        += runtime.sim.mem_cycles;
-      scheduler.job_queue->time -= runtime.sim.cycles - time_start;
+      sim->runtime.sim.cycles        += sim->runtime.sim.mem_cycles;
+      sim->scheduler.job_queue->time -= sim->runtime.sim.cycles - time_start;
 
-      if (scheduler.job_queue->time <= 0)
+      if (sim->scheduler.job_queue->time <= 0)
 	{
-	  do_scheduler ();
+	  do_scheduler (sim);
 	}
     }
 }	/* exec_main() */
@@ -1087,7 +1050,7 @@ eval_operand (int            op_no,
 
       opd++;
       ret               += evalsim_reg (eval_operand_val (insn, opd));
-      cpu_state.insn_ea  = ret;
+      sim->cpu_state.insn_ea  = ret;
 
       return  ret;
     }
@@ -1164,7 +1127,7 @@ decode_execute (struct iqueue_entry *current)
 
   if (insn_index < 0)
     {
-      l_invalid (current);
+      l_invalid (sim,current);
     }
   else
     {
@@ -1172,7 +1135,7 @@ decode_execute (struct iqueue_entry *current)
     }
 
   if (do_stats)
-    analysis (&cpu_state.iqueue);
+    analysis (&sim->cpu_state.iqueue);
 }
 
 #include "insnset.c"
